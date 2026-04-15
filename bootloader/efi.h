@@ -11,6 +11,7 @@ typedef uint64_t EFI_STATUS;
 #define NULL ((void *)0)
 typedef unsigned long long UINTN; //Like uint64_t
 typedef uint64_t EFI_PHYSICAL_ADDRESS; //An address in memory
+typedef uint64_t EFI_VIRTUAL_ADDRESS;
 
 //GUID type
 typedef struct {
@@ -82,6 +83,23 @@ typedef struct {
     EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *Mode;
 } EFI_GRAPHICS_OUTPUT_PROTOCOL;
 
+//The memory map type.
+typedef struct {
+    uint32_t Type;
+    EFI_PHYSICAL_ADDRESS PhysicalStart;
+    EFI_VIRTUAL_ADDRESS VirtualStart;
+    uint64_t NumberOfPages;
+    uint64_t Attribute;
+} EFI_MEMORY_DESCRIPTOR;
+
+//Gets the memory map.
+typedef EFI_STATUS (EFIAPI *EFI_GET_MEMORY_MAP) (
+    UINTN *MemoryMapSize,
+    EFI_MEMORY_DESCRIPTOR *MemoryMap,
+    UINTN *MapKey,
+    UINTN *DescriptorSize,
+    uint32_t *DescriptorVersion
+);
 
 //The boot services struct.
 typedef struct {
@@ -92,7 +110,9 @@ typedef struct {
     void *_unused2[2];
 
     //Memory Services
-    void *_unused3[5];
+    void *_unused3[2];
+    EFI_GET_MEMORY_MAP GetMemoryMap;
+    void *_unused12[2];
 
     //Event & Timer Services
     void *_unused4[6];
