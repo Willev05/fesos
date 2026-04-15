@@ -10,6 +10,7 @@ typedef void* EFI_HANDLE;
 typedef uint64_t EFI_STATUS;
 #define NULL ((void *)0)
 typedef unsigned long long UINTN; //Like uint64_t
+typedef uint64_t EFI_PHYSICAL_ADDRESS; //An address in memory
 
 //GUID type
 typedef struct {
@@ -45,6 +46,42 @@ typedef EFI_STATUS (EFIAPI *EFI_LOCATE_PROTOCOL) (
 typedef EFI_STATUS (EFIAPI *EFI_STALL) (
     UINTN Microseconds
 );
+
+//Possible pixel format, we hope it is PixelBlueGreenRedReserved8BitPerColor;
+typedef enum {
+    PixelRedGreenBlueReserved8BitPerColor,
+    PixelBlueGreenRedReserved8BitPerColor,
+    PixelBitMask,
+    PixelBltOnly,
+    PixelFormatMax
+} EFI_GRAPHICS_PIXEL_FORMAT;
+
+//Information for mode described next in file.
+typedef struct {
+    uint32_t Version;
+    uint32_t HorizontalResolution;
+    uint32_t VerticalResolution;
+    EFI_GRAPHICS_PIXEL_FORMAT PixelFormat;
+    uint32_t _unused[4];
+    uint32_t PixelsPerScanLine;
+} EFI_GRAPHICS_OUTPUT_MODE_INFORMATION;
+
+//Actual data for GOP.
+typedef struct {
+    uint32_t MaxMode;
+    uint32_t Mode;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *Info;
+    UINTN SizeOfInfo;
+    EFI_PHYSICAL_ADDRESS FrameBufferBase;
+    UINTN FrameBufferSize;
+} EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE;
+
+//The GOP. We will need to send this data to the Kernel.
+typedef struct {
+    void *_unused[3];
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *Mode;
+} EFI_GRAPHICS_OUTPUT_PROTOCOL;
+
 
 //The boot services struct.
 typedef struct {
