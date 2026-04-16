@@ -4,15 +4,18 @@
 #define EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID \
 {0x9042a9de,0x23dc,0x4a38,\
 {0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a}}
+
 #define EFI_LOADED_IMAGE_PROTOCOL_GUID \
 {0x5B1B31A1,0x9562,0x11d2,\
 {0x8E,0x3F,0x00,0xA0,0xC9,0x69,0x72,0x3B}}
+
 #define EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID \
 {0x0964e5b22,0x6459,0x11d2,\
 {0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}}
+
 #define EFI_FILE_INFO_ID \
 {0x09576e92,0x6d3f,0x11d2,\
-{0x8e39,0x00,0xa0,0xc9,0x69,0x72,0x3b}}
+{0x8e, 0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}}
 
 //Basic types
 typedef void* EFI_HANDLE;
@@ -42,6 +45,14 @@ typedef enum {
    EfiUnacceptedMemoryType,
    EfiMaxMemoryType
 } EFI_MEMORY_TYPE;
+
+//Allocation type for allocate pages
+typedef enum {
+    AllocateAnyPages,
+    AllocateMaxAddress,
+    AllocateAddress,
+    MaxAllocateType
+} EFI_ALLOCATE_TYPE;
 
 //GUID type
 typedef struct {
@@ -145,11 +156,13 @@ typedef EFI_STATUS (EFIAPI *EFI_HANDLE_PROTOCOL) (
     void **Interface
 );
 
+struct _EFI_SYSTEM_TABLE;
+
 //Loaded image protocol, usually got from the function above with passing the ImageHandle.
 typedef struct {
     uint32_t Revision;
     EFI_HANDLE ParentHandle;
-    EFI_SYSTEM_TABLE *SystemTable;
+    struct _EFI_SYSTEM_TABLE *SystemTable;
 
     //Source of the image (We need ts for drive)
     EFI_HANDLE DeviceHandle;
@@ -203,7 +216,7 @@ typedef struct _EFI_FILE_PROTOCOL {
     EFI_FILE_READ Read;
     void *_unused2[3];
     EFI_FILE_GET_INFO GetInfo;
-    void *_unused3[6]
+    void *_unused3[6];
 } EFI_FILE_PROTOCOL;
 
 typedef struct {
@@ -225,13 +238,21 @@ struct _EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
 
 typedef EFI_STATUS (EFIAPI *EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_OPEN_VOLUME) (
     struct _EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *This,
-    void **Root //EFI_FILE_PROTOCOL
+    EFI_FILE_PROTOCOL **Root
 );
 
 typedef struct _EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
     uint64_t Revision;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_OPEN_VOLUME OpenVolume;
 } EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
+
+//Allocates pages instead of a simple pool.
+typedef EFI_STATUS (EFIAPI *EFI_ALLOCATE_PAGES) (
+    EFI_ALLOCATE_TYPE Type,
+    EFI_MEMORY_TYPE MemoryType,
+    UINTN Pages,
+    EFI_PHYSICAL_ADDRESS *Memory
+);
 
 //The boot services struct.
 typedef struct {
@@ -242,7 +263,8 @@ typedef struct {
     void *_unused2[2];
 
     //Memory Services
-    void *_unused3[2];
+    EFI_ALLOCATE_PAGES AllocatePages;
+    void *FreePages;
     EFI_GET_MEMORY_MAP GetMemoryMap;
     EFI_ALLOCATE_POOL AllocatePool;
     void *_unused12;
@@ -275,7 +297,7 @@ typedef struct {
 } EFI_BOOT_SERVICES;
 
 //The main struct passed to us from UEFI loader.
-typedef struct {
+typedef struct _EFI_SYSTEM_TABLE{
     char _unused[52];
     EFI_HANDLE ConsoleOutHandle;
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *conout; // ConOut pointer

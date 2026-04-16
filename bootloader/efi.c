@@ -21,8 +21,40 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     EFI_FILE_PROTOCOL *root;
 
     EFI_GUID loaded_image_protocol_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    SystemTable->BootServices->HandleProtocol(ImageHandle, &loaded_image_protocol_guid, (void**)&loaded_image);
 
-    SystemTable->BootServices->HandleProtocol(ImageHandle, &loaded_image_protocol_guid, &loaded_image);
+    //We do this to get the file system protocol for the specific drive this image was loaded from.
+    EFI_GUID file_system_protocol_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    SystemTable->BootServices->HandleProtocol(loaded_image->DeviceHandle, &file_system_protocol_guid, (void**)&file_system);
+
+    //We get the root of the drive from the file system.
+    file_system->OpenVolume(file_system, &root);
+
+    //Now, we open the kernel core file, which sits on the root.
+    EFI_FILE_PROTOCOL *kernel_file;
+    root->Open(root, &kernel_file, L"kernel_core.elf", 1, 0);
+
+    //Get the file size
+    UINTN info_size = 0;
+    EFI_FILE_INFO *file_info;
+    EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+
+    //We need to get the size of the struct, since the text is variable length.
+    kernel_file->GetInfo(kernel_file, &file_info_guid, &info_size, NULL);
+
+    //With the size, we request the memory, and load the file info.
+    SystemTable->BootServices->AllocatePool(EfiLoaderData, info_size, (void **)&file_info);
+    kernel_file->GetInfo(kernel_file, &file_info_guid, &info_size, file_info);
+
+    //We allocate the space needed to load the entire file.
+    UINTN kernel_elf_required_pages = (file_info->FileSize + 4095) / 4096;
+    EFI_PHYSICAL_ADDRESS kernel_elf_buffer;
+    SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, kernel_elf_required_pages, &kernel_elf_buffer);
+
+    //Load the entire thing.
+    UINTN kernel_elf_size_to_read = file_info->FileSize;
+    void *kernel_elf_ptr = (void *)kernel_elf_buffer;
+    kernel_file->Read(kernel_file, &kernel_elf_size_to_read, kernel_elf_ptr);
 
     //Quick and dirty ELF parser/loader.
 
