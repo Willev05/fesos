@@ -1,4 +1,5 @@
 #include "efi.h"
+#include "../shared/elf.h"
 
 uint16_t *EFIAPI to_string(uint64_t input);
 
@@ -57,6 +58,46 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     kernel_file->Read(kernel_file, &kernel_elf_size_to_read, kernel_elf_ptr);
 
     //Quick and dirty ELF parser/loader.
+    Elf64_Ehdr *ELF_file_header = (Elf64_Ehdr *)kernel_elf_ptr;
+
+    //The 0x0102464c457f is the little-endian version of the actual values that are supposed to be in the array from index 0 - 5.
+    if ((*(uint64_t *)(ELF_file_header->e_ident) & 0xFFFFFFFFFFFF) != 0x0102464c457f) {
+        SystemTable->conout->OutputString(SystemTable->conout, L"Kernel ELF file is not valid!\r\n");
+        while (1);
+        return 0;
+    }
+
+    //Start pulling the program headers, we only care about the PT_LOAD for now. 
+    Elf64_Phdr *ELF_program_header = (Elf64_Phdr *)((uint8_t *)kernel_elf_ptr + ELF_file_header->e_phoff);
+    uint64_t physical_base = 0x1000000;
+    uint64_t virtual_base;
+    uint8_t found_base = 0;
+    for (int i = 0; i < ELF_file_header->e_phnum; i++) {
+        //1 is the PT_LOAD type.
+        if (ELF_program_header[i].p_type != 1) continue;
+        if (!found_base) {
+            virtual_base = ELF_program_header[i].p_vaddr;
+            found_base = 1;
+        }
+
+        //Get the source address.
+        void *source_address = (uint8_t *)ELF_file_header + ELF_program_header[i].p_offset;
+
+        //Allocate pages
+        EFI_PHYSICAL_ADDRESS physical_offset = physical_base + (ELF_program_header[i].p_vaddr - virtual_base);
+        SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, (ELF_program_header[i].p_memsz + 4095) / 4096, &physical_offset);
+
+        //Copy the "real data"
+        if (ELF_program_header[i].p_filesz > 0) {
+            SystemTable->BootServices->CopyMem((void *)physical_offset, source_address, ELF_program_header[i].p_filesz);
+        }
+
+        //Zero the rest if memory size is larger thatn the data we had in the file
+        if (ELF_program_header[i].p_memsz > ELF_program_header[i].p_filesz) {
+            UINTN bss_size = ELF_program_header[i].p_memsz - ELF_program_header[i].p_filesz;
+            SystemTable->BootServices->SetMem((void *)(physical_offset + ELF_program_header[i].p_filesz), bss_size, 0);
+        }
+    }
 
     //Prepare the memory map get.
     UINTN MapSize = 0;

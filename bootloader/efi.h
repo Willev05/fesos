@@ -254,6 +254,20 @@ typedef EFI_STATUS (EFIAPI *EFI_ALLOCATE_PAGES) (
     EFI_PHYSICAL_ADDRESS *Memory
 );
 
+//Copies memory.
+typedef EFI_STATUS (EFIAPI *EFI_COPY_MEM) (
+    void *Destination,
+    void *Source,
+    UINTN Length
+);
+
+//Sets memory.
+typedef EFI_STATUS (EFIAPI *EFI_SET_MEM) (
+    void *Buffer,
+    UINTN Size,
+    uint8_t Value
+);
+
 //The boot services struct.
 typedef struct {
     //Table header
@@ -294,6 +308,14 @@ typedef struct {
     //Library Services
     void *_unused10[2];
     EFI_LOCATE_PROTOCOL LocateProtocol;
+    void *_unused14[2];
+
+    //32-bit CRC Services
+    void *_unused15;
+
+    //Miscelaneous Services
+    EFI_COPY_MEM CopyMem;
+    EFI_SET_MEM SetMem;
 } EFI_BOOT_SERVICES;
 
 //The main struct passed to us from UEFI loader.
