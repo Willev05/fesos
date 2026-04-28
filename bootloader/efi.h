@@ -255,14 +255,14 @@ typedef EFI_STATUS (EFIAPI *EFI_ALLOCATE_PAGES) (
 );
 
 //Copies memory.
-typedef EFI_STATUS (EFIAPI *EFI_COPY_MEM) (
+typedef void (EFIAPI *EFI_COPY_MEM) (
     void *Destination,
     void *Source,
     UINTN Length
 );
 
 //Sets memory.
-typedef EFI_STATUS (EFIAPI *EFI_SET_MEM) (
+typedef void (EFIAPI *EFI_SET_MEM) (
     void *Buffer,
     UINTN Size,
     uint8_t Value
