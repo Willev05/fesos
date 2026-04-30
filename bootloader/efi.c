@@ -1,5 +1,6 @@
 #include "efi.h"
 #include "../shared/elf.h"
+#include "../shared/boot_info.h"
 
 uint16_t *EFIAPI to_string(uint64_t input);
 uint16_t *EFIAPI to_string_hex(uint64_t input);
@@ -14,12 +15,24 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     EFI_STATUS status = 0;
 
+    //Allocate a page for outr boot struct which we will be filling up.
+    boot_info *BootInfo;
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS *)&BootInfo);
+    check_EFI_error(status, L"Could not allocate a page for the boot struct!", SystemTable);
+
     //Get the linear pixel buffer address.
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop_interface = NULL;
     status = SystemTable->BootServices->LocateProtocol(&gop_guid, NULL, (void**)&gop_interface);
     check_EFI_error(status, L"Unable to get the GOP!", SystemTable);
     SystemTable->conout->OutputString(SystemTable->conout, L"Got GOP!\r\n");
+
+    //Fill the slots for the boot info struct.
+    BootInfo->framebuffer_base = (void *)gop_interface->Mode->FrameBufferBase;
+    BootInfo->framebuffer_size = (uint64_t)gop_interface->Mode->FrameBufferSize;
+    BootInfo->horizontal_resolution = gop_interface->Mode->Info->HorizontalResolution;
+    BootInfo->vertical_resolution = gop_interface->Mode->Info->VerticalResolution;
+    BootInfo->pixels_per_scan_line = gop_interface->Mode->Info->PixelsPerScanLine;
 
     //Get a file handle on the drive root.
     EFI_LOADED_IMAGE_PROTOCOL *loaded_image;
@@ -119,6 +132,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     }
     SystemTable->conout->OutputString(SystemTable->conout, L"Finished parsing and loading elf!\r\n");
 
+    BootInfo->kernel_size = (uint64_t)ELF_file_header->e_phnum;
+    BootInfo->kernel_location_physical = (void*)physical_base;
+    BootInfo->kernel_location_virtual = (void*)virtual_base;
+
+    //After this DO NOT use UEFI functions to avoid modifying memory map.
     //Prepare the memory map get.
     UINTN MapSize = 0;
     EFI_MEMORY_DESCRIPTOR *Map = NULL;
@@ -131,7 +149,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     //Allocating the memory for the buffer will affect memory and change the map. Add some more buffer.
     MapSize += 2 * DescriptorSize;
-    status = SystemTable->BootServices->AllocatePool(EfiLoaderData, MapSize, (void**)&Map);
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, (MapSize + 4095) / 4096, (EFI_PHYSICAL_ADDRESS*)&Map);
     check_EFI_error(status, L"Unable to allocate memory for memory map!", SystemTable);
 
     //Get the actual map.
@@ -141,8 +159,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     if (status != 0) {
         SystemTable->conout->OutputString(SystemTable->conout, L"Buffer was Still too small!\r\n");
     }
-    SystemTable->conout->OutputString(SystemTable->conout, L"Got memory map!\r\n");
-    SystemTable->conout->OutputString(SystemTable->conout, to_string(DescriptorSize));
+
+    BootInfo->mmap = (void*)Map;
+    BootInfo->mmap_size = (uint64_t)MapSize;
 
     while (1) __asm__ volatile ("hlt");
 
