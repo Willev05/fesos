@@ -134,8 +134,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     SystemTable->conout->OutputString(SystemTable->conout, L"Finished parsing and loading elf!\r\n");
 
     BootInfo->kernel_size = (uint64_t)ELF_file_header->e_phnum;
-    BootInfo->kernel_location_physical = (uint32_t)physical_base;
-    BootInfo->kernel_location_virtual = (uint32_t)virtual_base;
+    BootInfo->kernel_location_physical = (uint64_t)physical_base;
+    BootInfo->kernel_location_virtual = (uint64_t)virtual_base;
 
     //Prep our page tables. We will direct map all of memory.
     //Start with our PML4 table.
