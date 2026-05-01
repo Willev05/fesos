@@ -1,11 +1,12 @@
 #include "efi.h"
 #include "../shared/elf.h"
 #include "../shared/boot_info.h"
+#include "../shared/memory.h"
 
 uint16_t *EFIAPI to_string(uint64_t input);
 uint16_t *EFIAPI to_string_hex(uint64_t input);
 void check_EFI_error(EFI_STATUS status, uint16_t *error_message, EFI_SYSTEM_TABLE *SystemTable);
-void InspectMemoryNear16MB(EFI_SYSTEM_TABLE *SystemTable);
+EFI_MEMORY_DESCRIPTOR *EFIAPI get_memory_map(UINTN *map_size, UINTN *descriptor_size, UINTN *map_key, EFI_SYSTEM_TABLE *SystemTable);
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable){
     SystemTable->conout->OutputString(
@@ -28,7 +29,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     SystemTable->conout->OutputString(SystemTable->conout, L"Got GOP!\r\n");
 
     //Fill the slots for the boot info struct.
-    BootInfo->framebuffer_base = (void *)gop_interface->Mode->FrameBufferBase;
+    BootInfo->framebuffer_base = (uint64_t)gop_interface->Mode->FrameBufferBase;
     BootInfo->framebuffer_size = (uint64_t)gop_interface->Mode->FrameBufferSize;
     BootInfo->horizontal_resolution = gop_interface->Mode->Info->HorizontalResolution;
     BootInfo->vertical_resolution = gop_interface->Mode->Info->VerticalResolution;
@@ -133,8 +134,92 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     SystemTable->conout->OutputString(SystemTable->conout, L"Finished parsing and loading elf!\r\n");
 
     BootInfo->kernel_size = (uint64_t)ELF_file_header->e_phnum;
-    BootInfo->kernel_location_physical = (void*)physical_base;
-    BootInfo->kernel_location_virtual = (void*)virtual_base;
+    BootInfo->kernel_location_physical = (uint32_t)physical_base;
+    BootInfo->kernel_location_virtual = (uint32_t)virtual_base;
+
+    //Prep our page tables. We will direct map all of memory.
+    //Start with our PML4 table.
+    page_table *PML4;
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PML4);
+    check_EFI_error(status, L"Cannot allocate page for PML4 table!", SystemTable);
+    SystemTable->BootServices->SetMem((void*)PML4, 4096, 0);
+    BootInfo->PML4 = (uint64_t)PML4;
+
+    //We need to get the memory map for the maximum ram address.
+    UINTN map_size;
+    UINTN descriptor_size;
+    EFI_MEMORY_DESCRIPTOR *map = get_memory_map(&map_size, &descriptor_size, NULL, SystemTable);
+
+    //Get a page to keep track of our page table addresses, for the PMM later on.
+    uint64_t *page_table_addresses;
+    uint32_t page_table_addresses_next_index = 0;
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&page_table_addresses);
+    check_EFI_error(status, L"Cannot allocate page for page table addresses array!", SystemTable);
+
+    //Now, lets map the memory!
+    uint8_t *map_ptr = (uint8_t*)map;
+    for (uint64_t i = 0; i < map_size; i += descriptor_size) {
+        map = (EFI_MEMORY_DESCRIPTOR*)map_ptr;
+        if (map->Type != EfiConventionalMemory &&
+        map->Type != EfiLoaderCode &&
+        map->Type != EfiLoaderData &&
+        map->Type != EfiBootServicesCode &&
+        map->Type != EfiBootServicesData &&
+        map->Type != EfiACPIReclaimMemory &&
+        map->Type != EfiACPIMemoryNVS
+        ) continue;
+
+        uint64_t low_bound_phys = map->PhysicalStart & ~0x1FFFFFULL;
+        uint64_t high_bound_phys = ((map->PhysicalStart + 4096 * map->NumberOfPages - 1) + 0x1FFFFFULL) & ~0x1FFFFFULL;
+
+        for (uint64_t current_address = low_bound_phys; current_address <= high_bound_phys; current_address += 0x200000) {
+            uint64_t current_address_virtual = current_address + DIRECT_MAP_BASE;
+            uint16_t PML4_index = (current_address_virtual >> 39) & 0x1FF;
+            uint16_t PDPT_index = (current_address_virtual >> 30) & 0x1FF;
+            uint16_t PD_index = (current_address_virtual >> 21) & 0x1FF;
+
+            page_table *PDPT;
+            page_table *PD;
+
+            if (!(PML4->entries[PML4_index].bits.present)) {
+                status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PDPT);
+                check_EFI_error(status, L"Cannot allocate page for next PDPT!", SystemTable);
+                SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
+                page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
+                PML4->entries[PML4_index].bits.present = 1;
+                PML4->entries[PML4_index].bits.writeable = 1;
+                PML4->entries[PML4_index].bits.execute_disable = 1;
+                PML4->entries[PML4_index].bits.global = 1;
+                PML4->entries[PML4_index].bits.physical_address = (uint64_t)PDPT >> 12;
+            }
+            else {
+                PDPT = (page_table*)(PML4->entries[PML4_index].bits.physical_address << 12);
+            }
+            
+            if (!(PDPT->entries[PDPT_index].bits.present)) {
+                status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PD);
+                check_EFI_error(status, L"Cannot allocate page for next PD!", SystemTable);
+                SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
+                page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
+                PDPT->entries[PDPT_index].bits.present = 1;
+                PDPT->entries[PDPT_index].bits.writeable = 1;
+                PDPT->entries[PDPT_index].bits.physical_address = (uint64_t)PD >> 12;
+            }
+            else {
+                PD = (page_table*)(PDPT->entries[PDPT_index].bits.physical_address << 12);
+            }
+
+            PD->entries[PD_index].bits.present = 1;
+            PD->entries[PD_index].bits.writeable = 1;
+            PD->entries[PD_index].bits.huge_page = 1;
+            PD->entries[PD_index].bits.physical_address = current_address >> 12;
+        }
+    } 
+
+    BootInfo->page_table_addresses = page_table_addresses;
+    BootInfo->page_table_addresses_count = page_table_addresses_next_index - 1;
+
+    SystemTable->conout->OutputString(SystemTable->conout, L"Finished direct mapping of memory!\r\n");
 
     //After this DO NOT use UEFI functions to avoid modifying memory map.
     //Prepare the memory map get.
@@ -160,7 +245,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
         SystemTable->conout->OutputString(SystemTable->conout, L"Buffer was Still too small!\r\n");
     }
 
-    BootInfo->mmap = (void*)Map;
+    BootInfo->mmap = (uint64_t)Map;
     BootInfo->mmap_size = (uint64_t)MapSize;
 
     while (1) __asm__ volatile ("hlt");
@@ -256,4 +341,31 @@ void check_EFI_error(EFI_STATUS status, uint16_t *error_message, EFI_SYSTEM_TABL
         SystemTable->conout->OutputString(SystemTable->conout, L"\r\n");
         while (1) __asm__ volatile ("hlt");
     }
+}
+
+EFI_MEMORY_DESCRIPTOR *EFIAPI get_memory_map(UINTN *map_size, UINTN *descriptor_size, UINTN *map_key, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_MEMORY_DESCRIPTOR *map = NULL;
+    uint32_t descriptor_version;
+    EFI_STATUS status;
+    UINTN map_key_alt;
+    //This is here in case you dont need the key AKA not exiting boot services.
+    if (!map_key) map_key = &map_key_alt;
+
+    //Get the required size
+    SystemTable->BootServices->GetMemoryMap(map_size, NULL, map_key, descriptor_size, &descriptor_version);
+
+    //Allocating the memory for the buffer will affect memory and change the map. Add some more buffer.
+    *map_size += 2 * (*descriptor_size);
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, (*map_size + 4095) / 4096, (EFI_PHYSICAL_ADDRESS*)&map);
+    check_EFI_error(status, L"Unable to allocate memory for memory map!", SystemTable);
+
+    //Get the actual map.
+    status = SystemTable->BootServices->GetMemoryMap(map_size, map, map_key, descriptor_size, &descriptor_version);
+    check_EFI_error(status, L"Unable to execute getmap!", SystemTable);
+
+    if (status != 0) {
+        SystemTable->conout->OutputString(SystemTable->conout, L"Buffer was Still too small!\r\n");
+    }
+
+    return map;
 }
