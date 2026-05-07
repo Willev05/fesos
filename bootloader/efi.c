@@ -117,7 +117,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
         //Allocate pages
         EFI_PHYSICAL_ADDRESS physical_offset = physical_base + (ELF_program_header[i].p_vaddr - virtual_base);
-        status = SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, (ELF_program_header[i].p_memsz + 4095) / 4096, &physical_offset);
+        status = SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, (ELF_program_header[i].p_memsz + 0x1FFFFF) / 0x200000, &physical_offset);
         check_EFI_error(status, L"Unable to allocate memory (huge page) for kernel section!", SystemTable);
 
         //Copy the "real data"
