@@ -43,6 +43,7 @@ typedef struct {
     uint64_t kernel_location_physical;
     uint64_t kernel_location_virtual;
     uint64_t kernel_size;
+    uint64_t kernel_stack_location_physical;
     uint64_t PML4;
     uint64_t *page_table_addresses;
     uint64_t page_table_addresses_count;

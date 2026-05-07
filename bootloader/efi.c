@@ -260,6 +260,43 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     PD->entries[PD_index].bits.execute_disable = 1;
     PD->entries[PD_index].bits.physical_address = (physical_base + 0x200000) >> 12;
 
+    //Map the stack page
+    PML4_index = (KERNEL_STACK_BASE >> 39) & 0x1FF; //Should be at index 511
+    PDPT_index = (KERNEL_STACK_BASE >> 30) & 0x1FF; //509
+    PD_index = (KERNEL_STACK_BASE >> 21) & 0x1FF; //511
+
+    //Check to see if these were already mapped (Could have been from kernel depends on address)
+    if (!PML4->entries[PML4_index].bits.present) {
+        status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PDPT);
+        check_EFI_error(status, L"Cannot allocate page for kernel stack's PDPT!", SystemTable);
+        SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
+        page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
+    }
+    else PDPT = (page_table*)(PML4->entries[PML4_index].bits.physical_address << 12);
+
+    if (!PDPT->entries[PDPT_index].bits.present) {
+        status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PD);
+        check_EFI_error(status, L"Cannot allocate page for kernel stack's PD!", SystemTable);
+        SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
+        page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
+    }
+    else PD = (page_table*)(PDPT->entries[PDPT_index].bits.physical_address << 12);
+
+    //Allocate a page for the stack (huge, 2MB alligned)
+    EFI_PHYSICAL_ADDRESS kernel_stack_physical_base = BootInfo->kernel_location_physical + (BootInfo->kernel_size * 512 * 4096);
+    status = SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, 512, &kernel_stack_physical_base);
+    check_EFI_error(status, L"Cannot allocate page for kernel's stack!", SystemTable);
+    SystemTable->BootServices->SetMem((void*)kernel_stack_physical_base, 512 * 4096, 0);
+    BootInfo->kernel_stack_location_physical = (uint64_t)kernel_stack_physical_base;
+
+    PD->entries[PD_index].bits.present = 1;
+    PD->entries[PD_index].bits.writeable = 1;
+    PD->entries[PD_index].bits.huge_page = 1;
+    PD->entries[PD_index].bits.global = 1;
+    PD->entries[PD_index].bits.execute_disable = 1;
+    PD->entries[PD_index].bits.physical_address = kernel_stack_physical_base >> 12;
+
+
     SystemTable->conout->OutputString(SystemTable->conout, L"Finished kernel mapping of memory!\r\n");
 
     BootInfo->page_table_addresses = page_table_addresses;

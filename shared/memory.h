@@ -1,6 +1,7 @@
 #include <stdint.h>
 #define DIRECT_MAP_BASE 0xFFFF888000000000
 #define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000
+#define KERNEL_STACK_BASE 0xFFFFFFFF80000000
 
 //This will represent all the bits in an entry for the page table.
 typedef struct {
