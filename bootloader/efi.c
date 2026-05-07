@@ -174,9 +174,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
         for (uint64_t current_address = low_bound_phys; current_address <= high_bound_phys; current_address += 0x200000) {
             uint64_t current_address_virtual = current_address + DIRECT_MAP_BASE;
-            uint16_t PML4_index = (current_address_virtual >> 39) & 0x1FF;
-            uint16_t PDPT_index = (current_address_virtual >> 30) & 0x1FF;
-            uint16_t PD_index = (current_address_virtual >> 21) & 0x1FF;
+            uint16_t PML4_index = (current_address_virtual >> 39) & 0x1FF; //Should start at index 273
+            uint16_t PDPT_index = (current_address_virtual >> 30) & 0x1FF; //0
+            uint16_t PD_index = (current_address_virtual >> 21) & 0x1FF; //0
 
             page_table *PDPT;
             page_table *PD;
@@ -189,7 +189,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
                 PML4->entries[PML4_index].bits.present = 1;
                 PML4->entries[PML4_index].bits.writeable = 1;
                 PML4->entries[PML4_index].bits.execute_disable = 1;
-                PML4->entries[PML4_index].bits.global = 1;
                 PML4->entries[PML4_index].bits.physical_address = (uint64_t)PDPT >> 12;
             }
             else {
@@ -212,41 +211,67 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
             PD->entries[PD_index].bits.present = 1;
             PD->entries[PD_index].bits.writeable = 1;
             PD->entries[PD_index].bits.huge_page = 1;
+            PD->entries[PD_index].bits.global = 1;
             PD->entries[PD_index].bits.physical_address = current_address >> 12;
         }
     } 
 
-    BootInfo->page_table_addresses = page_table_addresses;
-    BootInfo->page_table_addresses_count = page_table_addresses_next_index - 1;
-
     SystemTable->conout->OutputString(SystemTable->conout, L"Finished direct mapping of memory!\r\n");
+
+    //Map the actual kernel as well!
+    uint16_t PML4_index = (KERNEL_VIRTUAL_BASE >> 39) & 0x1FF; //Should start at index 511
+    uint16_t PDPT_index = (KERNEL_VIRTUAL_BASE >> 30) & 0x1FF; //510 (Before last GB)
+    uint16_t PD_index = (KERNEL_VIRTUAL_BASE >> 21) & 0x1FF; //0
+
+    //Make the required page tables
+    page_table *PDPT;
+    page_table *PD;
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PDPT);
+    check_EFI_error(status, L"Cannot allocate page for kernel's PDPT!", SystemTable);
+    SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
+    page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
+
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PD);
+    check_EFI_error(status, L"Cannot allocate page for kernel's PD!", SystemTable);
+    SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
+    page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
+
+    //Create the mapping in the higher tables
+    PML4->entries[PML4_index].bits.present = 1;
+    PML4->entries[PML4_index].bits.writeable = 1;
+    PML4->entries[PML4_index].bits.physical_address = (uint64_t)PDPT >> 12;
+
+    PDPT->entries[PDPT_index].bits.present = 1;
+    PDPT->entries[PDPT_index].bits.writeable = 1;
+    PDPT->entries[PDPT_index].bits.physical_address = (uint64_t)PD >> 12;
+
+    //Map the first section
+    PD->entries[PD_index].bits.present = 1;
+    PD->entries[PD_index].bits.huge_page = 1;
+    PD->entries[PD_index].bits.global = 1;
+    PD->entries[PD_index].bits.physical_address = physical_base >> 12;
+
+    //Map seccond section
+    PD_index++;
+    PD->entries[PD_index].bits.present = 1;
+    PD->entries[PD_index].bits.writeable = 1;
+    PD->entries[PD_index].bits.huge_page = 1;
+    PD->entries[PD_index].bits.global = 1;
+    PD->entries[PD_index].bits.execute_disable = 1;
+    PD->entries[PD_index].bits.physical_address = (physical_base + 0x200000) >> 12;
+
+    SystemTable->conout->OutputString(SystemTable->conout, L"Finished kernel mapping of memory!\r\n");
+
+    BootInfo->page_table_addresses = page_table_addresses;
+    BootInfo->page_table_addresses_count = page_table_addresses_next_index;
 
     //After this DO NOT use UEFI functions to avoid modifying memory map.
     //Prepare the memory map get.
-    UINTN MapSize = 0;
-    EFI_MEMORY_DESCRIPTOR *Map = NULL;
-    UINTN MapKey;
-    UINTN DescriptorSize;
-    uint32_t DescriptorVersion;
+    UINTN map_key;
 
-    //Get the required size
-    SystemTable->BootServices->GetMemoryMap(&MapSize, NULL, &MapKey, &DescriptorSize, &DescriptorVersion);
-
-    //Allocating the memory for the buffer will affect memory and change the map. Add some more buffer.
-    MapSize += 2 * DescriptorSize;
-    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, (MapSize + 4095) / 4096, (EFI_PHYSICAL_ADDRESS*)&Map);
-    check_EFI_error(status, L"Unable to allocate memory for memory map!", SystemTable);
-
-    //Get the actual map.
-    status = SystemTable->BootServices->GetMemoryMap(&MapSize, Map, &MapKey, &DescriptorSize, &DescriptorVersion);
-    check_EFI_error(status, L"Unable to execute getmap!", SystemTable);
-
-    if (status != 0) {
-        SystemTable->conout->OutputString(SystemTable->conout, L"Buffer was Still too small!\r\n");
-    }
-
-    BootInfo->mmap = (uint64_t)Map;
-    BootInfo->mmap_size = (uint64_t)MapSize;
+    map = get_memory_map(&map_size, &descriptor_size, &map_key, SystemTable);
+    BootInfo->mmap = (uint64_t)map;
+    BootInfo->mmap_size = (uint64_t)map_size;
 
     while (1) __asm__ volatile ("hlt");
 
