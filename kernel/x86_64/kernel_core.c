@@ -1,5 +1,6 @@
 #include "include/elf.h"
 #include "include/boot_info.h"
+#include "include/serial.h"
 
 uint32_t magic_number = 0xDEADC0DE;
 
@@ -12,6 +13,9 @@ void _start(boot_info BootInfo) {
     } else {
         uninitialized_var = 2;
     }
+
+    serial_init();
+    serial_puts("Hello from the kernel!\n");
 
     while (1) {
         __asm__("hlt");

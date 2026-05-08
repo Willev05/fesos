@@ -3,28 +3,23 @@ ENTRY(_start)
 
 SECTIONS
 {
-    /* Kernel starts at the High-Half 2GB mark */
     . = 0xFFFFFFFF80000000;
 
-    /* SEGMENT 1: Code and Read-Only Data */
-    .text : ALIGN(0x200000) {
-        *(.text .text.*)
+    .text : {
+        *(.text)
+        *(.rodata*)
     } :text
 
-    .rodata : ALIGN(0x200000) {
-        *(.rodata .rodata.*)
-    } :text
-
-    /* Force a jump to the next 2MB boundary for the Data segment */
+    /* Force the VIRTUAL address to the next 2MB, 
+       but don't pad the FILE size of the previous segment */
     . = ALIGN(0x200000);
 
-    /* SEGMENT 2: Writable Data and BSS */
     .data : {
-        *(.data .data.*)
+        *(.data)
     } :data
 
     .bss : {
-        *(.bss .bss.*)
+        *(.bss)
         *(COMMON)
     } :data
 }
