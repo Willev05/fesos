@@ -1,3 +1,4 @@
+#pragma once
 #include <stdint.h>
 #define DIRECT_MAP_BASE 0xFFFF888000000000
 #define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000

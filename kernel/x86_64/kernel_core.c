@@ -1,6 +1,6 @@
-#include "include/elf.h"
-#include "include/boot_info.h"
-#include "include/serial.h"
+#include "include/kernel/elf.h"
+#include "include/kernel/boot_info.h"
+#include "include/drivers/serial.h"
 
 uint32_t magic_number = 0xDEADC0DE;
 

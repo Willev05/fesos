@@ -1,3 +1,4 @@
+#pragma once
 #include <stdint.h>
 
 //The out byte function for io ports.
