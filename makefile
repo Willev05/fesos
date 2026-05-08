@@ -1,53 +1,72 @@
-CC = clang
-BOOT_LD = lld-link
-KERNEL_LD = ld.lld
-AS = nasm
+#Directories
+BUILD_DIR := build
+BOOTLOADER_OUT_DIR := $(BUILD_DIR)/iso/EFI/BOOT
+KERNEL_CORE_OUT_DIR := $(BUILD_DIR)/iso
 
-COMMON_FLAGS = -ffreestanding -fno-stack-protector -mno-red-zone -Wall -Wextra
+KERNEL_CORE_SRC_DIR := kernel/x86_64
+BOOTLOADER_SRC_DIR := bootloader
 
-# Bootloader specific
-BOOT_CFLAGS = $(COMMON_FLAGS) -fshort-wchar -O2 -target x86_64-unknown-windows-coff
-BOOT_LDFLAGS = /subsystem:efi_application \
+KERNEL_CORE_OBJ_DIR := $(BUILD_DIR)/kernel_core_objects
+BOOTLOADER_OBJ_DIR := $(BUILD_DIR)/bootloader_objects
+
+#Targets
+KERNEL_CORE := $(KERNEL_CORE_OUT_DIR)/kernel_core.elf
+BOOTLOADER := $(BOOTLOADER_OUT_DIR)/BOOTX64.EFI
+
+#Toolchain
+CC := clang
+BOOT_LD := lld-link
+KERNEL_LD := ld.lld
+AS := nasm
+
+#Flags
+COMMON_CFLAGS := -ffreestanding -fno-stack-protector -mno-red-zone -Wall -Wextra
+
+BOOT_CFLAGS := $(COMMON_CFLAGS) -fshort-wchar -O2 -target x86_64-unknown-windows-coff
+BOOT_LDFLAGS := /subsystem:efi_application \
 				/entry:efi_main \
 				/nodefaultlib
-BOOT_ASFLAGS = -f win64
+BOOT_ASFLAGS := -f win64
 
-KERNEL_CFLAGS = $(COMMON_FLAGS) -O2 -target x86_64-unknown-none-elf -mcmodel=kernel
-KERNEL_LDFLAGS = -T kernel/x86_64/kernel_core_linker_script.ld
+KERNEL_CFLAGS := $(COMMON_CFLAGS) -O2 -target x86_64-unknown-none-elf -mcmodel=kernel
+KERNEL_LDFLAGS := -T kernel/x86_64/kernel_core_linker_script.ld
 
-BUILD_DIR = build
-BOOTLOADER_OUT_DIR = $(BUILD_DIR)/iso/EFI/BOOT
-KERNEL_CORE_OUT_DIR = $(BUILD_DIR)/iso
+#Kernel core related discoveries
+KERNEL_CORE_SOURCES := $(shell find $(KERNEL_CORE_SRC_DIR) -name '*.c')
+KERNEL_CORE_OBJECTS := $(KERNEL_CORE_SOURCES:$(KERNEL_CORE_SRC_DIR)/%.c=$(KERNEL_CORE_OBJ_DIR)/%.o)
 
 .PHONY: all clean run
-all: $(BOOTLOADER_OUT_DIR)/BOOTX64.EFI  $(KERNEL_CORE_OUT_DIR)/kernel_core.elf
 
-$(KERNEL_CORE_OUT_DIR)/kernel_core.elf: $(BUILD_DIR)/kernel_core.o $(BUILD_DIR)/serial.o
-	@mkdir -p $(KERNEL_CORE_OUT_DIR)
-	$(KERNEL_LD) $(KERNEL_LDFLAGS) $^ -o $@
+all: $(KERNEL_CORE) $(BOOTLOADER)
 
-$(BUILD_DIR)/kernel_core.o: kernel/x86_64/kernel_core.c kernel/x86_64/drivers/serial.c
-	@mkdir -p $(BUILD_DIR)
-	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+#Link kernel core
+$(KERNEL_CORE): $(KERNEL_CORE_OBJECTS)
+	@echo "LD  $@"
+	@mkdir -p $(dir $@)
+	@$(KERNEL_LD) $(KERNEL_LDFLAGS) $^ -o $@
 
-$(BUILD_DIR)/serial.o: kernel/x86_64/drivers/serial.c
-	@mkdir -p $(BUILD_DIR)
-	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+#Compile kernel core files
+$(KERNEL_CORE_OBJ_DIR)/%.o: $(KERNEL_CORE_SRC_DIR)/%.c
+	@echo "CC  $<"
+	@mkdir -p $(dir $@)
+	@$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-$(BOOTLOADER_OUT_DIR)/BOOTX64.EFI: $(BUILD_DIR)/bootloader.o $(BUILD_DIR)/jump_to_kernel.o
-	@mkdir -p $(BOOTLOADER_OUT_DIR)
-	$(BOOT_LD) $(BOOT_LDFLAGS) /out:$@ $^
+#Link bootloader
+$(BOOTLOADER): $(BOOTLOADER_OBJ_DIR)/bootloader.o $(BOOTLOADER_OBJ_DIR)/jump_to_kernel.o
+	@echo "LD  $@"
+	@mkdir -p $(dir $@)
+	@$(BOOT_LD) $(BOOT_LDFLAGS) /out:$@ $^
 
-$(BUILD_DIR)/bootloader.o: bootloader/efi.c
-	@mkdir -p $(BUILD_DIR)
-	$(CC) $(BOOT_CFLAGS) -c $< -o $@
+#Compile bootloader
+$(BOOTLOADER_OBJ_DIR)/bootloader.o: $(BOOTLOADER_SRC_DIR)/efi.c
+	@echo "CC  $<"
+	@mkdir -p $(dir $@)
+	@$(CC) $(BOOT_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/jump_to_kernel.o: bootloader/jump_to_kernel.nasm
-	@mkdir -p $(BUILD_DIR)
-	$(AS) $(BOOT_ASFLAGS) $< -o $@
-
-clean:
-	rm -f $(BUILD_DIR)/*.*
+$(BOOTLOADER_OBJ_DIR)/jump_to_kernel.o: $(BOOTLOADER_SRC_DIR)/jump_to_kernel.nasm
+	@echo "AS $<"
+	@mkdir -p $(dir $@)
+	@$(AS) $(BOOT_ASFLAGS) $< -o $@
 
 run:
 	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
@@ -55,3 +74,7 @@ run:
                    -drive format=raw,file=fat:rw:build/iso \
 				   -d int,cpu_reset -D qemu.log \
 				   -serial stdio
+
+clean:
+	@echo "Cleaning..."
+	@rm -rf $(BUILD_DIR)
