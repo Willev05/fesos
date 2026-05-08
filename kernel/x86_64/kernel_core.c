@@ -1,5 +1,5 @@
-#include "../../shared/elf.h"
-#include "../../shared/boot_info.h"
+#include "include/elf.h"
+#include "include/boot_info.h"
 
 uint32_t magic_number = 0xDEADC0DE;
 

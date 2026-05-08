@@ -1,7 +1,7 @@
 #include "efi.h"
-#include "../shared/elf.h"
-#include "../shared/boot_info.h"
-#include "../shared/memory.h"
+#include "../kernel/x86_64/include/elf.h"
+#include "../kernel/x86_64/include/boot_info.h"
+#include "../kernel/x86_64/include/memory.h"
 
 uint16_t *EFIAPI to_string(uint64_t input);
 uint16_t *EFIAPI to_string_hex(uint64_t input);
