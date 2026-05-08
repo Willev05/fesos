@@ -26,17 +26,17 @@ $(KERNEL_CORE_OUT_DIR)/kernel_core.elf: $(BUILD_DIR)/kernel_core.o
 	@mkdir -p $(KERNEL_CORE_OUT_DIR)
 	$(KERNEL_LD) $(KERNEL_LDFLAGS) $< -o $@
 
-$(BUILD_DIR)/kernel_core.o: shared/elf.h kernel/x86_64/kernel_core.c
+$(BUILD_DIR)/kernel_core.o: kernel/x86_64/kernel_core.c
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(KERNEL_CFLAGS) -c kernel/x86_64/kernel_core.c -o $@
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 $(BOOTLOADER_OUT_DIR)/BOOTX64.EFI: $(BUILD_DIR)/bootloader.o $(BUILD_DIR)/jump_to_kernel.o
 	@mkdir -p $(BOOTLOADER_OUT_DIR)
 	$(BOOT_LD) $(BOOT_LDFLAGS) /out:$@ $^
 
-$(BUILD_DIR)/bootloader.o: bootloader/efi.h shared/elf.h bootloader/efi.c
+$(BUILD_DIR)/bootloader.o: bootloader/efi.c
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(BOOT_CFLAGS) -c bootloader/efi.c -o $@
+	$(CC) $(BOOT_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/jump_to_kernel.o: bootloader/jump_to_kernel.nasm
 	@mkdir -p $(BUILD_DIR)
