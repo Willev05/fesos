@@ -268,6 +268,12 @@ typedef void (EFIAPI *EFI_SET_MEM) (
     uint8_t Value
 );
 
+//Exits the boot services. This gives control over to the kernel.
+typedef EFI_STATUS (EFIAPI *EFI_EXIT_BOOT_SERVICES) (
+    EFI_HANDLE ImageHandle,
+    UINTN MapKey
+);
+
 //The boot services struct.
 typedef struct {
     //Table header
@@ -292,7 +298,8 @@ typedef struct {
     void *_unused13[5];
 
     //Image services
-    void *_unused6[5];
+    void *_unused6[4];
+    EFI_EXIT_BOOT_SERVICES ExitBootServices;
 
     //Miscellaneous Services
     void *_unused7;

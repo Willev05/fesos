@@ -8,7 +8,7 @@ uint16_t *EFIAPI to_string_hex(uint64_t input);
 void check_EFI_error(EFI_STATUS status, uint16_t *error_message, EFI_SYSTEM_TABLE *SystemTable);
 EFI_MEMORY_DESCRIPTOR *EFIAPI get_memory_map(UINTN *map_size, UINTN *descriptor_size, UINTN *map_key, EFI_SYSTEM_TABLE *SystemTable);
 
-extern void jump_to_kernel(uint64_t pml4_phys, uint64_t entry_point, uint64_t stack_top, void *BootInfo);
+extern void __attribute__((sysv_abi)) jump_to_kernel(uint64_t pml4_phys, uint64_t entry_point, uint64_t stack_top, void *BootInfo);
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable){
     SystemTable->conout->OutputString(
@@ -105,6 +105,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     Elf64_Phdr *ELF_program_header = (Elf64_Phdr *)((uint8_t *)kernel_elf_ptr + ELF_file_header->e_phoff);
     uint64_t physical_base = 0x2000000;
     uint64_t virtual_base;
+    uint64_t kernel_entry_point = ELF_file_header->e_entry;
     uint8_t found_base = 0;
     for (int i = 0; i < ELF_file_header->e_phnum; i++) {
         //1 is the PT_LOAD type.
@@ -146,6 +147,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     check_EFI_error(status, L"Cannot allocate page for PML4 table!", SystemTable);
     SystemTable->BootServices->SetMem((void*)PML4, 4096, 0);
     BootInfo->PML4 = (uint64_t)PML4;
+    
+    SystemTable->conout->OutputString(SystemTable->conout, L"PML4 Address: ");
+    SystemTable->conout->OutputString(SystemTable->conout, to_string_hex((uint64_t)PML4));
+    SystemTable->conout->OutputString(SystemTable->conout, L"\r\n");
 
     //We need to get the memory map for the maximum ram address.
     UINTN map_size;
@@ -214,7 +219,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
             PD->entries[PD_index].bits.writeable = 1;
             PD->entries[PD_index].bits.huge_page = 1;
             PD->entries[PD_index].bits.global = 1;
-            PD->entries[PD_index].bits.physical_address = current_address >> 12;
+            PD->entries[PD_index].bits.physical_address = (current_address >> 12) & ~0x1FFULL;
         }
     } 
 
@@ -251,7 +256,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     PD->entries[PD_index].bits.present = 1;
     PD->entries[PD_index].bits.huge_page = 1;
     PD->entries[PD_index].bits.global = 1;
-    PD->entries[PD_index].bits.physical_address = physical_base >> 12;
+    PD->entries[PD_index].bits.physical_address = (physical_base >> 12) & ~0x1FFULL;
 
     //Map seccond section
     PD_index++;
@@ -260,12 +265,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     PD->entries[PD_index].bits.huge_page = 1;
     PD->entries[PD_index].bits.global = 1;
     PD->entries[PD_index].bits.execute_disable = 1;
-    PD->entries[PD_index].bits.physical_address = (physical_base + 0x200000) >> 12;
+    PD->entries[PD_index].bits.physical_address = ((physical_base + 0x200000) >> 12) & ~0x1FFULL;
 
     //Map the stack page
-    PML4_index = (KERNEL_STACK_BASE >> 39) & 0x1FF; //Should be at index 511
-    PDPT_index = (KERNEL_STACK_BASE >> 30) & 0x1FF; //509
-    PD_index = (KERNEL_STACK_BASE >> 21) & 0x1FF; //511
+    PML4_index = ((KERNEL_STACK_BASE - 1) >> 39) & 0x1FF; //Should be at index 511
+    PDPT_index = ((KERNEL_STACK_BASE - 1) >> 30) & 0x1FF; //509
+    PD_index = ((KERNEL_STACK_BASE - 1) >> 21) & 0x1FF; //511
 
     //Check to see if these were already mapped (Could have been from kernel depends on address)
     if (!PML4->entries[PML4_index].bits.present) {
@@ -273,6 +278,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
         check_EFI_error(status, L"Cannot allocate page for kernel stack's PDPT!", SystemTable);
         SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
         page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
+        PML4->entries[PML4_index].bits.present = 1;
+        PML4->entries[PML4_index].bits.writeable = 1;
+        PML4->entries[PML4_index].bits.physical_address = (uint64_t)PDPT >> 12;
     }
     else PDPT = (page_table*)(PML4->entries[PML4_index].bits.physical_address << 12);
 
@@ -281,6 +289,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
         check_EFI_error(status, L"Cannot allocate page for kernel stack's PD!", SystemTable);
         SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
         page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
+        PDPT->entries[PDPT_index].bits.present = 1;
+        PDPT->entries[PDPT_index].bits.writeable = 1;
+        PDPT->entries[PDPT_index].bits.physical_address = (uint64_t)PD >> 12;
     }
     else PD = (page_table*)(PDPT->entries[PDPT_index].bits.physical_address << 12);
 
@@ -296,8 +307,74 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     PD->entries[PD_index].bits.huge_page = 1;
     PD->entries[PD_index].bits.global = 1;
     PD->entries[PD_index].bits.execute_disable = 1;
-    PD->entries[PD_index].bits.physical_address = kernel_stack_physical_base >> 12;
+    PD->entries[PD_index].bits.physical_address = (kernel_stack_physical_base >> 12) & ~0x1FFULL;
 
+    //Map the nasm bridge, needs to be identity mapped
+    //Get the address of our function.
+    uint64_t bridge_address = (uint64_t)jump_to_kernel;
+    uint64_t assumed_bridge_end_address = bridge_address + 512;
+
+    PML4_index = (bridge_address >> 39) & 0x1FF;
+    PDPT_index = (bridge_address >> 30) & 0x1FF;
+    PD_index = (bridge_address >> 21) & 0x1FF;
+
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PDPT);
+    check_EFI_error(status, L"Cannot allocate page for kernel's PDPT!", SystemTable);
+    SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
+    page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
+
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PD);
+    check_EFI_error(status, L"Cannot allocate page for kernel's PD!", SystemTable);
+    SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
+    page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
+
+    PML4->entries[PML4_index].bits.present = 1;
+    PML4->entries[PML4_index].bits.writeable = 1;
+    PML4->entries[PML4_index].bits.physical_address = (uint64_t)PDPT >> 12;
+
+    PDPT->entries[PDPT_index].bits.present = 1;
+    PDPT->entries[PDPT_index].bits.writeable = 1;
+    PDPT->entries[PDPT_index].bits.physical_address = (uint64_t)PD >> 12;
+
+    PD->entries[PD_index].bits.present = 1;
+    PD->entries[PD_index].bits.writeable = 1;
+    PD->entries[PD_index].bits.huge_page = 1;
+    PD->entries[PD_index].bits.global = 1;
+    PD->entries[PD_index].bits.physical_address = (bridge_address >> 12) & ~0x1FFULL;
+
+    if ((bridge_address >> 21) != (assumed_bridge_end_address >> 21)) {
+        PML4_index = (assumed_bridge_end_address >> 39) & 0x1FF;
+        PDPT_index = (assumed_bridge_end_address >> 30) & 0x1FF;
+        PD_index = (assumed_bridge_end_address >> 21) & 0x1FF;
+
+        if (!PML4->entries[PML4_index].bits.present) {
+            status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PDPT);
+            check_EFI_error(status, L"Cannot allocate page for kernel stack's PDPT!", SystemTable);
+            SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
+            page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
+            PML4->entries[PML4_index].bits.present = 1;
+            PML4->entries[PML4_index].bits.writeable = 1;
+            PML4->entries[PML4_index].bits.physical_address = (uint64_t)PDPT >> 12;
+        }
+        else PDPT = (page_table*)(PML4->entries[PML4_index].bits.physical_address << 12);
+
+        if (!PDPT->entries[PDPT_index].bits.present) {
+            status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PD);
+            check_EFI_error(status, L"Cannot allocate page for kernel stack's PD!", SystemTable);
+            SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
+            page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
+            PDPT->entries[PDPT_index].bits.present = 1;
+            PDPT->entries[PDPT_index].bits.writeable = 1;
+            PDPT->entries[PDPT_index].bits.physical_address = (uint64_t)PD >> 12;
+        }
+        else PD = (page_table*)(PDPT->entries[PDPT_index].bits.physical_address << 12);
+
+        PD->entries[PD_index].bits.present = 1;
+        PD->entries[PD_index].bits.writeable = 1;
+        PD->entries[PD_index].bits.huge_page = 1;
+        PD->entries[PD_index].bits.global = 1;
+        PD->entries[PD_index].bits.physical_address = (assumed_bridge_end_address >> 12) & ~0x1FFULL;
+    }
 
     SystemTable->conout->OutputString(SystemTable->conout, L"Finished kernel mapping of memory!\r\n");
 
@@ -311,6 +388,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     map = get_memory_map(&map_size, &descriptor_size, &map_key, SystemTable);
     BootInfo->mmap = (uint64_t)map;
     BootInfo->mmap_size = (uint64_t)map_size;
+
+    //We finally leave the UEFI space!
+    status = SystemTable->BootServices->ExitBootServices(ImageHandle, map_key);
+
+    //Make sure the call worked! If not, then we print, but its fine since it failed anyways.
+    check_EFI_error(status, L"ExitBootServices failed!", SystemTable);
+
+    //Finally, we jump to the kernel.
+    jump_to_kernel((uint64_t)PML4, kernel_entry_point, KERNEL_STACK_BASE, (void*)BootInfo);
 
     while (1) __asm__ volatile ("hlt");
 
