@@ -1,39 +1,52 @@
-CC      = x86_64-linux-gnu-gcc
-LD      = x86_64-linux-gnu-ld
-OBJCOPY = x86_64-linux-gnu-objcopy
+CC = clang
+BOOT_LD = lld-link
+KERNEL_LD = ld.lld
+AS = nasm
 
-COMMON_FLAGS = -ffreestanding -fno-stack-protector -mno-red-zone -Wall
+COMMON_FLAGS = -ffreestanding -fno-stack-protector -mno-red-zone -Wall -Wextra
 
 # Bootloader specific
-BOOT_CFLAGS = $(COMMON_FLAGS) -fshort-wchar -fpic
-BOOT_LDFLAGS = -shared -Bsymbolic -T bootloader/bootloader_linker.ld
+BOOT_CFLAGS = $(COMMON_FLAGS) -fshort-wchar -O2 -target x86_64-unknown-windows-coff
+BOOT_LDFLAGS = /subsystem:efi_application \
+				/entry:efi_main \
+				/nodefaultlib
+BOOT_ASFLAGS = -f win64
 
-MTOOLS_IMG = uefi.img
+KERNEL_CFLAGS = $(COMMON_FLAGS) -O2 -target x86_64-unknown-none-elf
+KERNEL_LDFLAGS = -T kernel/x86_64/kernel_core_linker_script.ld
 
-image: BOOTX64.EFI
-	rm -f $(MTOOLS_IMG)
-	dd if=/dev/zero of=$(MTOOLS_IMG) bs=1M count=64
-	mformat -i $(MTOOLS_IMG) ::
-	mmd -i $(MTOOLS_IMG) ::/EFI
-	mmd -i $(MTOOLS_IMG) ::/EFI/BOOT
-	mcopy -i $(MTOOLS_IMG) BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
-	sync
+BUILD_DIR = build
+BOOTLOADER_OUT_DIR = $(BUILD_DIR)/iso/EFI/BOOT
+KERNEL_CORE_OUT_DIR = $(BUILD_DIR)/iso
 
-BOOTX64.EFI: bootloader.so
-	# Link directly to the final EFI file
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
-	
-	# Set the correct Subsystem and Target flags to ensure UEFI compliance
-	$(OBJCOPY) --target=efi-app-x86_64 --subsystem=10 $@ $@
-	
-	# Force the size to be a multiple of 4KB to prevent "Not an Image"
-	truncate -s %4096 $@
+.PHONY: all clean run
+all: $(BOOTLOADER_OUT_DIR)/BOOTX64.EFI  $(KERNEL_CORE_OUT_DIR)/kernel_core.elf
 
-bootloader.so: bootloader.o
-	$(LD) $(BOOT_LDFLAGS) $< -o $@
+$(KERNEL_CORE_OUT_DIR)/kernel_core.elf: $(BUILD_DIR)/kernel_core.o
+	@mkdir -p $(KERNEL_CORE_OUT_DIR)
+	$(KERNEL_LD) $(KERNEL_LDFLAGS) $< -o $@
 
-bootloader.o: bootloader/efi.h bootloader/efi.c
+$(BUILD_DIR)/kernel_core.o: shared/elf.h kernel/x86_64/kernel_core.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(KERNEL_CFLAGS) -c kernel/x86_64/kernel_core.c -o $@
+
+$(BOOTLOADER_OUT_DIR)/BOOTX64.EFI: $(BUILD_DIR)/bootloader.o $(BUILD_DIR)/jump_to_kernel.o
+	@mkdir -p $(BOOTLOADER_OUT_DIR)
+	$(BOOT_LD) $(BOOT_LDFLAGS) /out:$@ $^
+
+$(BUILD_DIR)/bootloader.o: bootloader/efi.h shared/elf.h bootloader/efi.c
+	@mkdir -p $(BUILD_DIR)
 	$(CC) $(BOOT_CFLAGS) -c bootloader/efi.c -o $@
 
+$(BUILD_DIR)/jump_to_kernel.o: bootloader/jump_to_kernel.nasm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) $(BOOT_ASFLAGS) $< -o $@
+
 clean:
-	rm -f *.o *.so *.EFI
+	rm -f $(BUILD_DIR)/*.*
+
+run:
+	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
+                   -net none \
+                   -drive format=raw,file=fat:rw:build/iso \
+				   -d int,cpu_reset -D qemu.log
