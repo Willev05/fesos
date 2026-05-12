@@ -73,7 +73,7 @@ run:
                    -net none \
                    -drive format=raw,file=fat:rw:build/iso \
 				   -d int,cpu_reset -D qemu.log \
-				   -serial stdio
+				   -serial stdio -no-reboot -no-shutdown
 
 clean:
 	@echo "Cleaning..."
