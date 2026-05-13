@@ -20,7 +20,7 @@ KERNEL_LD := ld.lld
 AS := nasm
 
 #Flags
-COMMON_CFLAGS := -ffreestanding -fno-stack-protector -mno-red-zone -Wall -Wextra
+COMMON_CFLAGS := -g -ffreestanding -fno-stack-protector -mno-red-zone -Wall -Wextra
 
 BOOT_CFLAGS := $(COMMON_CFLAGS) -fshort-wchar -O2 -target x86_64-unknown-windows-coff
 BOOT_LDFLAGS := /subsystem:efi_application \
@@ -35,7 +35,7 @@ KERNEL_LDFLAGS := -T kernel/x86_64/kernel_core_linker_script.ld
 KERNEL_CORE_SOURCES := $(shell find $(KERNEL_CORE_SRC_DIR) -name '*.c')
 KERNEL_CORE_OBJECTS := $(KERNEL_CORE_SOURCES:$(KERNEL_CORE_SRC_DIR)/%.c=$(KERNEL_CORE_OBJ_DIR)/%.o)
 
-.PHONY: all clean run
+.PHONY: all clean run run-dbg
 
 all: $(KERNEL_CORE) $(BOOTLOADER)
 
@@ -70,10 +70,18 @@ $(BOOTLOADER_OBJ_DIR)/jump_to_kernel.o: $(BOOTLOADER_SRC_DIR)/jump_to_kernel.nas
 
 run:
 	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
-                   -net none \
+                   -net none -m 4G \
+                   -drive format=raw,file=fat:rw:build/iso \
+				   -serial stdio
+
+run-dbg: 
+	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -s -S \
+                   -net none -m 4G \
                    -drive format=raw,file=fat:rw:build/iso \
 				   -d int,cpu_reset -D qemu.log \
-				   -serial stdio -no-reboot -no-shutdown
+				   -serial stdio -no-reboot -no-shutdown \
+				   -M q35
+
 
 clean:
 	@echo "Cleaning..."

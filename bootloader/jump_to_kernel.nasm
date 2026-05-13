@@ -1,4 +1,5 @@
 [BITS 64]
+DEFAULT REL
 
 section .text
 global jump_to_kernel
@@ -26,11 +27,11 @@ jump_to_kernel:
     or eax, (1 << 11)
     wrmsr
 
-    ;Switch to new PML4 table
-    mov cr3, rdi
-
     ;We need to setup a temporary GDT
     lgdt [gdt64_ptr]
+
+    ;Switch to new PML4 table
+    mov cr3, rdi
 
     ;Reload the data segments
     mov ax, 0x10

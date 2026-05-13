@@ -164,7 +164,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     //While we do this, we will get the max memory address from the map, and allocate the bitmap to simplify life for our pmm.
     uint64_t max_memory_address = 0;
     for (uint64_t i = 0; i < map_size; i += descriptor_size) {
-        map = (EFI_MEMORY_DESCRIPTOR*)map_ptr;
+        EFI_MEMORY_DESCRIPTOR *map = (EFI_MEMORY_DESCRIPTOR*)(map_ptr + i);
         if (map->Type != EfiConventionalMemory &&
         map->Type != EfiLoaderCode &&
         map->Type != EfiLoaderData &&
@@ -221,7 +221,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
         //Calculate the max address.
         max_memory_address = (map->PhysicalStart + 4096 * map->NumberOfPages > max_memory_address) ? map->PhysicalStart + 4096 * map->NumberOfPages : max_memory_address;
-        map_ptr += descriptor_size;
     } 
 
     //Calculate the size of our bitmap and allocate it for later use.

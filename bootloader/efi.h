@@ -128,6 +128,7 @@ typedef struct {
 //The memory map type.
 typedef struct {
     EFI_MEMORY_TYPE Type;
+    uint32_t pad;
     EFI_PHYSICAL_ADDRESS PhysicalStart;
     EFI_VIRTUAL_ADDRESS VirtualStart;
     uint64_t NumberOfPages;
