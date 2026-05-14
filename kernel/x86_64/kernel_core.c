@@ -1,7 +1,8 @@
 #include "include/kernel/elf.h"
 #include "include/kernel/boot_info.h"
 #include "include/drivers/serial.h"
-#include "include/memory/pmm.h"
+#include "include/memory/memory.h"
+#include "include/kernel/idt.h"
 
 uint32_t magic_number = 0xDEADC0DE;
 
@@ -15,9 +16,12 @@ void _start(boot_info *BootInfo) {
         uninitialized_var = 2;
     }
 
-    pmm_init(BootInfo);
+    BootInfo = (boot_info*)((uint64_t)(BootInfo) + DIRECT_MAP_BASE);
 
     serial_init();
+    idt_init();
+    pmm_init(BootInfo);
+
     serial_puts("Hello from the kernel!\n");
 
     while (1) {
