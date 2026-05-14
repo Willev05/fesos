@@ -79,13 +79,14 @@ run:
 	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
                    -net none -m 4G \
                    -drive format=raw,file=fat:rw:build/iso \
+				   -d int,cpu_reset,guest_errors -D qemu.log \
 				   -serial stdio
 
 run-dbg: 
 	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -s -S \
                    -net none -m 4G \
                    -drive format=raw,file=fat:rw:build/iso \
-				   -d int,cpu_reset -D qemu.log \
+				   -d int,cpu_reset,guest_errors -D qemu.log \
 				   -serial stdio -no-reboot -no-shutdown \
 				   -M q35
 

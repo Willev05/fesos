@@ -3,6 +3,10 @@
 #include "../include/common/math.h"
 #include "../../../bootloader/efi.h"
 
+//Temp
+#include "../include/drivers/serial.h"
+#include "../include/common/stdstr.h"
+
 static uint8_t *bitmap;
 static uint64_t bitmap_size;
 static uint64_t maximum_address_physical;
@@ -13,7 +17,7 @@ static void unset_bitmap_bit(uint64_t bit_number);
 static uint8_t get_bitmap_bit(uint64_t bit_number);
 
 //Initialize the PMM. Includes reading the UEFI mmap to get available physical memory area and allocate the bitmap for use in other functions. MUST BE RAN FIRST.
-void pmm_init(boot_info *bi) {
+void pmm_init(boot_info *bi, uint64_t bi_p) {
     //We need to add the direct mapping base since we passed the physical address to this.
     uint8_t *mmap_ptr = (uint8_t*)(bi->mmap + DIRECT_MAP_BASE);
     uint64_t mmap_size = bi->mmap_size;
@@ -25,7 +29,7 @@ void pmm_init(boot_info *bi) {
 
     //Loop the entire memory map to find which pages can be labeled as "free"
     for (uint64_t i = 0; i < mmap_size; i += descriptor_size) {
-        EFI_MEMORY_DESCRIPTOR *mmap = (EFI_MEMORY_DESCRIPTOR*)mmap_ptr;
+        EFI_MEMORY_DESCRIPTOR *mmap = (EFI_MEMORY_DESCRIPTOR*)(mmap_ptr + i);
         if (mmap->Type != EfiConventionalMemory &&
         mmap->Type != EfiLoaderCode &&
         mmap->Type != EfiLoaderData &&
@@ -36,8 +40,6 @@ void pmm_init(boot_info *bi) {
 
         uint64_t bit_to_change = mmap->PhysicalStart >> 12;
         for (uint64_t j = 0; j < mmap->NumberOfPages; j++) unset_bitmap_bit(bit_to_change++);
-
-        mmap_ptr += descriptor_size;
     }
 
     //We reset these to 1 since they are reserved until any further code says otherwise
@@ -60,7 +62,7 @@ void pmm_init(boot_info *bi) {
     for (uint64_t i = 0; i < (bi->mmap_size + 4095) / 4096; i++) set_bitmap_bit(bit_to_change++);
 
     //The bootinfo struct
-    bit_to_change = (uint64_t)bi >> 12;
+    bit_to_change = (uint64_t)bi_p >> 12;
     set_bitmap_bit(bit_to_change++);
 
     //The memory bitmap
