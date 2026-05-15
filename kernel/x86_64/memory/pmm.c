@@ -2,6 +2,7 @@
 #include "../include/memory/vmm.h"
 #include "../include/common/math.h"
 #include "../../../bootloader/efi.h"
+#include "../include/kernel/boot_info.h"
 
 //Temp
 #include "../include/drivers/serial.h"
@@ -17,7 +18,11 @@ static void unset_bitmap_bit(uint64_t bit_number);
 static uint8_t get_bitmap_bit(uint64_t bit_number);
 
 //Initialize the PMM. Includes reading the UEFI mmap to get available physical memory area and allocate the bitmap for use in other functions. MUST BE RAN FIRST.
-void pmm_init(boot_info *bi, uint64_t bi_p) {
+void pmm_init(uint64_t bi_v, uint64_t bi_p, uint64_t identity_PDPT_p) {
+    //Cast back to BootInfo and page_table.
+    boot_info *bi = (boot_info*)bi_v;
+    page_table *identity_PDPT = (page_table*)(identity_PDPT_p + DIRECT_MAP_BASE);
+
     //We need to add the direct mapping base since we passed the physical address to this.
     uint8_t *mmap_ptr = (uint8_t*)(bi->mmap + DIRECT_MAP_BASE);
     uint64_t mmap_size = bi->mmap_size;
@@ -79,8 +84,19 @@ void pmm_init(boot_info *bi, uint64_t bi_p) {
     set_bitmap_bit(bi->PML4 >> 12);
 
     //All our other page tables.
+    //We need to add the DIRECT_MAP_BASE to the array base to access it.
+    bi->page_table_addresses = (uint64_t*)((uint64_t)bi->page_table_addresses + DIRECT_MAP_BASE);
     //We loop through the array! This array itself can be overwritten later since it was only used to tell the pmm where the page tables were located.
     for (uint64_t i = 0; i < bi->page_table_addresses_count; i++) set_bitmap_bit(bi->page_table_addresses[i] >> 12);
+
+    //We can lastly clear out the tables from our old identity map.
+    //Since it was a 2MB pages, we can simply stop at PD.
+    for(uint64_t i = 0; i < 512; i++) {
+        if (identity_PDPT->entries[i].raw) {
+            unset_bitmap_bit(identity_PDPT->entries[i].bits.physical_address);
+        }
+    }
+    unset_bitmap_bit(identity_PDPT_p >> 12);
 }
 
 //Need to implement allignment support.
