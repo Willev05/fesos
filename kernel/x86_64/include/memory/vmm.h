@@ -42,3 +42,16 @@ typedef union {
 typedef struct {
     page_table_entry entries[512];
 } page_table;
+
+//Flags for vmm map
+#define PT_WRITEABLE 0x1
+#define PT_USER_AVAILABLE 0x2
+#define PT_WRITE_THROUGH 0x4
+#define PT_DISABLE_CACHING 0x8
+#define PT_HUGE_PAGE 0x10
+#define PT_GLOBAL 0x20
+#define PT_NX 0x40
+
+void vmm_init(uint64_t bi_v);
+int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags);
+int vmm_unmap(uint64_t v_addr, uint64_t pages);

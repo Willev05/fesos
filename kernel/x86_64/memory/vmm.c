@@ -1,0 +1,123 @@
+#include "../include/memory/vmm.h"
+#include "../include/memory/pmm.h"
+#include "../include/kernel/boot_info.h"
+#include "../include/common/stdtypes.h"
+
+static page_table *PML4; 
+
+static page_table *vmm_walk_and_crate_next_table(page_table *table, uint16_t index);
+static void vmm_zero_page(uint64_t p_addr);
+
+void vmm_init(uint64_t bi_v) {
+    boot_info *bi = (boot_info*)bi_v;
+    PML4 = (page_table*)(bi->PML4 + DIRECT_MAP_BASE);
+}
+
+//Map this virtual address to this physical address, over n pages contiguously. Flags are defined in vmm.h.
+int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags) {
+    if (!pages) return 0;
+    for (uint64_t i = 0; i < pages; i++) {
+        uint16_t PML4_index = (v_addr >> 39) & 0x1FF;
+        uint16_t PDPT_index = (v_addr >> 30) & 0x1FF;
+        uint16_t PD_index = (v_addr >> 21) & 0x1FF;
+
+        page_table *PDPT = vmm_walk_and_crate_next_table(PML4, PML4_index);
+        page_table *PD = vmm_walk_and_crate_next_table(PDPT, PDPT_index);
+    
+        //Here, we need to check if this will be a huge page or not.
+        if (flags & 0x10) {
+            //We assume the VMA or other caller will have the addresses alligned to the 2MB mark.
+            PD->entries[PD_index].bits.present = 1;
+            PD->entries[PD_index].bits.writeable = (flags & 0x1);
+            PD->entries[PD_index].bits.user_available = (flags & 0x2) >> 1;
+            PD->entries[PD_index].bits.write_through = (flags & 0x4) >> 2;
+            PD->entries[PD_index].bits.disable_caching = (flags & 0x8) >> 3;
+            PD->entries[PD_index].bits.huge_page = 1;
+            PD->entries[PD_index].bits.global = (flags & 0x20) >> 5;
+            PD->entries[PD_index].bits.execute_disable = (flags & 0x40) >> 6;
+
+            PD->entries[PD_index].bits.physical_address = (p_addr >> 12) & ~0x1FFULL;
+
+            for (int i = 0; i < 512; i++) {
+                vmm_zero_page(p_addr);
+                p_addr += 0x1000;
+            }
+            
+            v_addr += 0x200000;
+            continue;
+        }
+        
+        page_table *PT = vmm_walk_and_crate_next_table(PD, PD_index);
+
+        uint64_t PT_index = (v_addr >> 12) & 0x1FF;
+
+        PT->entries[PT_index].bits.present = 1;
+        PT->entries[PT_index].bits.writeable = (flags & 0x1);
+        PT->entries[PT_index].bits.user_available = (flags & 0x2) >> 1;
+        PT->entries[PT_index].bits.write_through = (flags & 0x4) >> 2;
+        PT->entries[PT_index].bits.disable_caching = (flags & 0x8) >> 3;
+        PT->entries[PT_index].bits.global = (flags & 0x20) >> 5;
+        PT->entries[PT_index].bits.execute_disable = (flags & 0x40) >> 6;
+
+        PT->entries[PT_index].bits.physical_address = (p_addr >> 12);
+
+        vmm_zero_page(p_addr);
+        v_addr += 0x1000;
+        p_addr += 0x1000;
+    }
+    return pages;
+}
+
+//Unmap this virtual address over n consecutive pages.
+int vmm_unmap(uint64_t v_addr, uint64_t pages) {
+    if (!pages) return 0;
+    for (uint64_t i = 0; i < pages; i++) {
+        uint16_t PML4_index = (v_addr >> 39) & 0x1FF;
+        uint16_t PDPT_index = (v_addr >> 30) & 0x1FF;
+        uint16_t PD_index = (v_addr >> 21) & 0x1FF;
+
+        //This function should be fine to use since the pages should exist.
+        page_table *PDPT = vmm_walk_and_crate_next_table(PML4, PML4_index);
+        page_table *PD = vmm_walk_and_crate_next_table(PDPT, PDPT_index);
+    
+        //Here, we need to check if this will be a huge page or not.
+        if (PD->entries[PD_index].bits.huge_page) {
+            PD->entries[PD_index].bits.present = 0;
+            v_addr += 0x200000;
+            continue;
+        }
+        
+        page_table *PT = vmm_walk_and_crate_next_table(PD, PD_index);
+
+        uint64_t PT_index = (v_addr >> 12) & 0x1FF;
+
+        PT->entries[PT_index].bits.present = 0;
+        v_addr += 0x1000;
+    }
+    return pages;
+}
+
+static page_table *vmm_walk_and_crate_next_table(page_table *table, uint16_t index) {
+    page_table *next_table = NULL;
+    if (!table->entries[index].bits.present) {
+        //Allocate a PD table
+        uint64_t next_table_p = (uint64_t)pmm_allocate_frames(1, 4096);
+        vmm_zero_page(next_table_p);
+        next_table = (page_table*)(next_table_p + DIRECT_MAP_BASE);
+
+        table->entries[index].bits.present = 1;
+        table->entries[index].bits.writeable = 1;
+        table->entries[index].bits.user_available = 1;
+        table->entries[index].bits.physical_address = next_table_p >> 12;
+    }
+    else next_table = (page_table*)((table->entries[index].bits.physical_address << 12) + DIRECT_MAP_BASE);
+
+    return next_table;
+}
+
+static void vmm_zero_page(uint64_t p_addr) {
+    uint64_t *ptr = (uint64_t*)(p_addr + DIRECT_MAP_BASE);
+    for (int i = 0; i < 512; i++){
+        ptr[i] = 0;
+    }
+}

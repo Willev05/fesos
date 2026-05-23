@@ -3,10 +3,7 @@
 #include "../include/common/math.h"
 #include "../../../bootloader/efi.h"
 #include "../include/kernel/boot_info.h"
-
-//Temp
-#include "../include/drivers/serial.h"
-#include "../include/common/stdstr.h"
+#include "../include/common/stdtypes.h"
 
 static uint8_t *bitmap;
 static uint64_t bitmap_size;

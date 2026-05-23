@@ -31,6 +31,7 @@ void _start(boot_info *BootInfo) {
     uint64_t identity_PDPT_p = PML4->entries[0].bits.physical_address << 12;
 
     pmm_init((uint64_t)BootInfo, BootInfo_p, identity_PDPT_p);
+    vmm_init((uint64_t)BootInfo);
 
     serial_puts("Hello from the kernel!\n");
 

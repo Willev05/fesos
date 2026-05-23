@@ -21,7 +21,6 @@
 //Basic types
 typedef void* EFI_HANDLE;
 typedef uint64_t EFI_STATUS;
-#define NULL ((void *)0)
 typedef unsigned long long UINTN; //Like uint64_t
 typedef uint64_t EFI_PHYSICAL_ADDRESS; //An address in memory
 typedef uint64_t EFI_VIRTUAL_ADDRESS;

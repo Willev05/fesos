@@ -2,6 +2,7 @@
 #include "../kernel/x86_64/include/kernel/elf.h"
 #include "../kernel/x86_64/include/kernel/boot_info.h"
 #include "../kernel/x86_64/include/memory/memory.h"
+#include "../kernel/x86_64/include/common/stdtypes.h"
 
 uint16_t *EFIAPI to_string(uint64_t input);
 uint16_t *EFIAPI to_string_hex(uint64_t input);
