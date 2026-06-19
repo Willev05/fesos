@@ -2,7 +2,21 @@
 #include <stdint.h>
 #define DIRECT_MAP_BASE 0xFFFF888000000000
 #define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000
+
+//Grows down
 #define KERNEL_STACK_BASE 0xFFFFFFFF80000000
+#define KERNEL_STACK_SIZE (2ULL * 1024 * 1024) //2MB
+#define KERNEL_STACK_LIMIT (KERNEL_STACK_BASE - KERNEL_STACK_SIZE) //0xFFFFFFFF7FE00000
+
+//Grows up
+#define KERNEL_HEAP_START (KERNEL_HEAP_LIMIT - KERNEL_HEAP_SIZE) //0xFFFFFFFB7FDFF000
+#define KERNEL_HEAP_SIZE (16ULL * 1024 * 1024 * 1024) //16GB
+#define KERNEL_HEAP_LIMIT (KERNEL_STACK_LIMIT - 4096) //Guard page added for padding, should be 0xFFFFFFFF7FDFF000
+
+//Grows up
+#define KERNEL_MMIO_START (KERNEL_HEAP_LIMIT - KERNEL_HEAP_SIZE) //0xFFFFFFF77FDFE000
+#define KERNEL_MMIO_SIZE (16ULL * 1024 * 1024 * 1024) //16GB
+#define KERNEL_MMIO_LIMIT (KERNEL_HEAP_START - 4096) //Guard page added for padding, should be 0xFFFFFFFB7FDFE000
 
 //This will represent all the bits in an entry for the page table.
 typedef struct {
@@ -55,3 +69,4 @@ typedef struct {
 void vmm_init(uint64_t bi_v);
 int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags);
 int vmm_unmap(uint64_t v_addr, uint64_t pages);
+uint64_t vmm_get_physical_from_virtual(uint64_t v_addr);

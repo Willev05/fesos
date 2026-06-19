@@ -68,7 +68,7 @@ int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags) {
     return pages;
 }
 
-//Unmap this virtual address over n consecutive pages.
+//Unmap this virtual address over n consecutive pages. //TODO: Fix issue where page table leaf will not be wiped completely, making some flags potentially effect future mappings of this virtual address.
 int vmm_unmap(uint64_t v_addr, uint64_t pages) {
     if (!pages) return 0;
     for (uint64_t i = 0; i < pages; i++) {
@@ -95,6 +95,27 @@ int vmm_unmap(uint64_t v_addr, uint64_t pages) {
         v_addr += 0x1000;
     }
     return pages;
+}
+
+uint64_t vmm_get_physical_from_virtual(uint64_t v_addr) {
+    //We can assume there is a valid table and that this is a valid mapped address
+    uint16_t PML4_index = (v_addr >> 39) & 0x1FF;
+    uint16_t PDPT_index = (v_addr >> 30) & 0x1FF;
+    uint16_t PD_index = (v_addr >> 21) & 0x1FF;
+
+    page_table *PDPT = vmm_walk_and_crate_next_table(PML4, PML4_index);
+    page_table *PD = vmm_walk_and_crate_next_table(PDPT, PDPT_index);
+    
+    //Here, we need to check if this will be a huge page or not.
+    if (PD->entries[PD_index].bits.huge_page) {
+        return PD->entries[PD_index].bits.physical_address << 12;
+    }
+        
+    page_table *PT = vmm_walk_and_crate_next_table(PD, PD_index);
+
+    uint64_t PT_index = (v_addr >> 12) & 0x1FF;
+
+    return PT->entries[PT_index].bits.physical_address << 12;
 }
 
 static page_table *vmm_walk_and_crate_next_table(page_table *table, uint16_t index) {
