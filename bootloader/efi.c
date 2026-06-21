@@ -59,7 +59,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     //Now, we open the kernel core file, which sits on the root.
     EFI_FILE_PROTOCOL *kernel_file;
-    status = root->Open(root, &kernel_file, L"kernel_core.elf", 1, 0);
+    status = root->Open(root, &kernel_file, L"kcore.elf", 1, 0);
     check_EFI_error(status, L"Unable to find or open kernel file!", SystemTable);
 
     //Get the file size

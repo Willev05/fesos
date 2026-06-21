@@ -34,7 +34,38 @@ vm_ds_node *vm_ds_find_worst_fit(vm_ds_node *root, uint64_t size);
 
 void vma_init() {
     //We need to initialize the kernel VMA tree. For this, we need a page to hold our starting nodes for the tree.
-    //TODO: Actual implementation :)
+    //We request a page from the PMM then map it to the base of the heap.
+    uint64_t phys_addr = (uint64_t)pmm_allocate_frames(1, 4096);
+    vmm_map(KERNEL_HEAP_START, phys_addr, 1, PT_GLOBAL | PT_WRITEABLE | PT_NX);
+
+    //We want to get as many nodes that can fit in one page
+    uint32_t node_per_page = 4096 / sizeof(vm_ds_node);
+    vm_ds_node *start_of_page = (vm_ds_node*)KERNEL_HEAP_START;
+
+    //We then set them up to be put in our free list. We go until the before-last one. The last will point to the other list.
+    for (uint32_t i = 0; i < node_per_page - 1; i++) {
+        start_of_page[i].start_addr = (uint64_t)(start_of_page + i + 1);
+    }
+
+    //We make sure to add the nodes to our node counter!
+    free_node_count += node_per_page;
+
+    //We then set our free list.
+    free_list = start_of_page;
+
+    //Now, we can init our kernel heap tree. We start with a node representing the node page we just requested.
+    kernel_vma_heap_tree_root = alloc_vm_ds_node();
+    vm_ds_init_node(kernel_vma_heap_tree_root, KERNEL_HEAP_START, 4096, VMA_REGULAR);
+    kernel_vma_heap_tree_root->flags = PT_GLOBAL | PT_WRITEABLE | PT_NX;
+
+    //Then, we create the next node representing the rest of kernel heap space which we add to the kernel tree.
+    vm_ds_node *kheap_remaining = alloc_vm_ds_node();
+    vm_ds_init_node(kheap_remaining, KERNEL_HEAP_START + 4096, KERNEL_HEAP_SIZE - 4096, VMA_FREE);
+    vm_ds_insert(kernel_vma_heap_tree_root, kheap_remaining);
+
+    //After the heap init, we can simply do the MMIO one.
+    kernel_vma_mmio_tree_root = alloc_vm_ds_node();
+    vm_ds_init_node(kernel_vma_mmio_tree_root, KERNEL_MMIO_START, KERNEL_MMIO_SIZE, VMA_FREE);
 }
 
 void vma_free_memory_from_ktree(uint64_t start_addr) {
@@ -99,6 +130,8 @@ void *vma_allocate_memory_from_tree(vm_ds_node *root, uint64_t size, vm_node_typ
         node_for_request->backing.file.file_ptr = allocation_backing->file.file_ptr;
         node_for_request->backing.file.offset = allocation_backing->file.file_ptr;
     }
+
+    return (void *)node_for_request->start_addr;
 }
 
 void vma_free_memory_from_tree(vm_ds_node *root, uint64_t start_addr) {
@@ -114,7 +147,7 @@ void vma_free_memory_from_tree(vm_ds_node *root, uint64_t start_addr) {
         //Both of these will have possibly non-contiguous frames in RAM. We need to free them in PMM before doing VMM unmap.
         for (uint64_t current_v_addr = node_to_free->start_addr; current_v_addr < current_v_addr + node_to_free->size; current_v_addr += 0x1000) {
             uint64_t phys_addr = vmm_get_physical_from_virtual(current_v_addr);
-            pmm_free_frames(phys_addr, 1);
+            pmm_free_frames((void *)phys_addr, 1);
         }
         
         //Then unmap!

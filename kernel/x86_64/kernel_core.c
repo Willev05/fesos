@@ -32,6 +32,7 @@ void _start(boot_info *BootInfo) {
 
     pmm_init((uint64_t)BootInfo, BootInfo_p, identity_PDPT_p);
     vmm_init((uint64_t)BootInfo);
+    vma_init();
 
     serial_puts("Hello from the kernel!\n");
 

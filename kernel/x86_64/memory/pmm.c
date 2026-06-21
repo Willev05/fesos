@@ -5,7 +5,7 @@
 #include "../include/kernel/boot_info.h"
 #include "../include/common/stdtypes.h"
 
-static uint8_t *bitmap;
+static volatile uint8_t *bitmap;
 static uint64_t bitmap_size;
 static uint64_t maximum_address_physical;
 static uint64_t total_memory;

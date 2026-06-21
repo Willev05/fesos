@@ -10,7 +10,7 @@ KERNEL_CORE_OBJ_DIR := $(BUILD_DIR)/kernel_core_objects
 BOOTLOADER_OBJ_DIR := $(BUILD_DIR)/bootloader_objects
 
 #Targets
-KERNEL_CORE := $(KERNEL_CORE_OUT_DIR)/kernel_core.elf
+KERNEL_CORE := $(KERNEL_CORE_OUT_DIR)/kcore.elf
 BOOTLOADER := $(BOOTLOADER_OUT_DIR)/BOOTX64.EFI
 
 #Toolchain
@@ -36,7 +36,7 @@ KERNEL_ASFLAGS := -f elf64
 KERNEL_CORE_SOURCES := $(shell find $(KERNEL_CORE_SRC_DIR) -name '*.c' -o -name '*.nasm')
 KERNEL_CORE_OBJECTS := $(addprefix $(KERNEL_CORE_OBJ_DIR)/, $(patsubst %.nasm, %.o, $(patsubst %.c, %.o, $(KERNEL_CORE_SOURCES))))
 
-.PHONY: all clean run run-dbg
+.PHONY: all clean run run-dbg image
 
 all: $(KERNEL_CORE) $(BOOTLOADER)
 
@@ -75,20 +75,36 @@ $(BOOTLOADER_OBJ_DIR)/jump_to_kernel.o: $(BOOTLOADER_SRC_DIR)/jump_to_kernel.nas
 	@mkdir -p $(dir $@)
 	@$(AS) $(BOOT_ASFLAGS) $< -o $@
 
+#Run QEMU and create image file
+image:
+	rm -f build/disk.img
+	@RAW_SIZE=$$(($$(du -s -m build/iso | cut -f1) + 12)); \
+	SIZE_MB=$$((RAW_SIZE < 48 ? 48 : RAW_SIZE)); \
+	echo "Building disk.img with dynamic size: $$SIZE_MB MB"; \
+	dd if=/dev/zero of=build/disk.img bs=1M count=$$SIZE_MB
+	parted -s --align optimal build/disk.img mklabel gpt
+	parted -s --align optimal build/disk.img mkpart ESP fat32 1MiB 100%
+	parted -s build/disk.img set 1 esp on
+	mformat -i build/disk.img@@1M -F
+	mcopy -i build/disk.img@@1M -s build/iso/* ::/
+
 run:
 	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
-                   -net none -m 4G \
-                   -drive format=raw,file=fat:rw:build/iso \
-				   -d int,cpu_reset,guest_errors -D qemu.log \
-				   -serial stdio
+                	-M q35 -net none -m 4G \
+					-device ahci,id=ahci \
+                	-drive id=disk,format=raw,file=build/disk.img,if=none \
+					-device ide-hd,drive=disk,bus=ahci.0 \
+					-d int,cpu_reset,guest_errors -D qemu.log \
+					-serial stdio
 
 run-dbg: 
 	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -s -S \
-                   -net none -m 4G \
-                   -drive format=raw,file=fat:rw:build/iso \
-				   -d int,cpu_reset,guest_errors -D qemu.log \
-				   -serial stdio -no-reboot -no-shutdown \
-				   -M q35
+                	-M q35 -net none -m 4G \
+					-device ahci,id=ahci \
+                	-drive id=disk,format=raw,file=build/disk.img,if=none \
+					-device ide-hd,drive=disk,bus=ahci.0 \
+					-d int,cpu_reset,guest_errors -D qemu.log \
+					-serial stdio -no-reboot -no-shutdown \
 
 
 clean:
