@@ -106,71 +106,53 @@ void *pmm_allocate_frames(uint64_t count, uint64_t alignment) {
     uint64_t step = alignment / 4096;
     //To quickly check over 64 pages. This should work since the bitmap should be page alligned, therefore 8 byte alligned.
     uint64_t *bitmap64 = (uint64_t*)bitmap; 
-    uint64_t bit_counter = 0;
+    uint64_t total_bits = 8 * bitmap_size;
     uint64_t found = 0;
-    uint64_t base_page = 0;
 
-    while (bit_counter < bitmap_size * 8) {
-        //Start by checking if the bit counter is alligned for 64 bits, if so, we will skip the block.
-        if (bit_counter % 64 == 0) {
-            //If the remaining pages are >= 64 and the 64 pages are all blank, then we can include these and skip past them all. 
-            if (count - found >= 64 && bitmap64[bit_counter / 64] == 0) {
-                if (bit_counter % step != 0){
-                    if (found) {
-                        found += 64;
-                        bit_counter += 64;
-                        continue;
-                    }
+    //Main loop, will loop through legal "base pages" that are always alligned.
+    for (uint64_t base = 0; base < total_bits; base += step){
+
+        //We check to see if the latest step has landed us on a 64-bit boundary. If so, we can fast track by skipping the entire uint64, so 64 pages if it is all full.
+        if (base % 64 == 0) { 
+            if (bitmap64[base / 64] == 0xFFFFFFFFFFFFFFFF) {
+                //We get the next available bit, which is after the 64 bit boundary.
+                uint64_t next_available_bit = base + 64;
+
+                //We get the remainder to see if we are alligned, if not, we go up to the bit in order to stay alligned.
+                uint64_t remainder = next_available_bit % step;
+                if (remainder != 0) {
+                    next_available_bit += (step - remainder);
                 }
-                else {
-                    if (!found) base_page = bit_counter;
-                    found += 64;
-                    bit_counter += 64;
-                    continue;
-                }
-            }
-            //If the entire block is full, we can simply skip it.
-            else if (bitmap64[bit_counter / 64] == 0xFFFFFFFFFFFFFFFF) {
-                bit_counter += 64;
-                found = 0;
+
+                //Set base so that when the loop adds step, it lands exactly on our target
+                base = next_available_bit - step;
                 continue;
             }
-            //If found is 0, then we can also assume that there was no 0s on the previous 64 page block boundary. 
-            else {
-                //We get the first occurence of the 0 using a builtin function: https://gcc.gnu.org/onlinedocs/gcc/Bit-Operation-Builtins.html
-                uint8_t bits_to_zero = __builtin_ctzll(~bitmap64[bit_counter / 64]);
-                bit_counter += bits_to_zero;
-                //If the 0 is not directly after previous block, then we need to reset the found counter.
-                found = (bits_to_zero) ? 0 : found;
-            }
         }
 
-        //If the step is not one page, and we need to find the first page, check alignment. Round to the next allignment point, or the 64 bit boundary to do a large check.
-        if (!found && step != 1) {
-            uint64_t distance_to_boundary = 64 - (bit_counter % 64);
-            uint64_t distance_to_step = bit_counter % step;
-            bit_counter += MAX(distance_to_boundary, bit_counter % step);
-            if (distance_to_boundary <= distance_to_step) continue;
-        } 
-
-        //If a free page is found, add to found, and if found was previously 0, set the base_page since we are starting a new "window".
-        if (!get_bitmap_bit(bit_counter++)) {
-            //Checks the allignment for the first page, if not valid, skip by <step> pages.
-            if (!found) base_page = bit_counter;
+        //This loop will take our alligned value and verify that there are n consecutvie free frames.
+        uint64_t found = 0;
+        for (uint64_t i = 0; i < count; i++) {
+            //Guard for out of physical memory bounds;
+            if (base + i >= total_bits) return NULL;
+            
+            //Checks to see if the frame is already in use, where it will break if so.
+            if (get_bitmap_bit(base + i)) break;
             found++;
         }
-        else found = 0;
-        if (found == count) break;
-    }
 
-    //Set these pages as used and return the physical address.
-    if (found == count) {
-        for (uint64_t i = 0; i < count; i++) {
-            set_bitmap_bit(base_page + i);
+        //We will check if we found a consecutive pages satisfying the requirement.
+        if (found == count) {
+            //We then mark these as in use so they do not get reallocated.
+            for (uint64_t i = 0; i < count; i++) {
+                set_bitmap_bit(base + i);
+            }
+            return (void*)(base * 4096);
         }
-        return (void*)(base_page * 4096);
+
     }
-    else return NULL;
+    //If we reach the end of the loop, then no physical memory satisfies the requirements.
+    return NULL;
 }
 
 void pmm_free_frames(void *start_address, uint64_t count) {

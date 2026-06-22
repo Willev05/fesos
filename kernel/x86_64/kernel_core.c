@@ -29,6 +29,14 @@ void _start(boot_info *BootInfo) {
     page_table *PML4 = (page_table*)(BootInfo->PML4 + DIRECT_MAP_BASE);
     PML4->entries[0].bits.present = 0;
     uint64_t identity_PDPT_p = PML4->entries[0].bits.physical_address << 12;
+    //Wipe the TLB to make sure the identity map is invalidated.
+    uint64_t cr3_val;
+    __asm__ volatile(
+    "mov %%cr3, %0\n\t"
+    "mov %0, %%cr3"
+    : "=r"(cr3_val)
+    :
+    : "memory");
 
     pmm_init((uint64_t)BootInfo, BootInfo_p, identity_PDPT_p);
     vmm_init((uint64_t)BootInfo);
