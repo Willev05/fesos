@@ -35,11 +35,18 @@ interrupt_handler_wrapper:
     push r14
     push r15
 
+    ;Push the CR2 register as well since certain interrupts need it i.e. page fault. Note: we need to mov to a general purpose register first before push
+    mov rax, cr2
+    push rax
+
     ;We want to save rbp for the C handler to have a reference to the beggining of our interrupt frame struct
     mov rdi, rsp
 
     ;Call our generic C interrupt handler
     call handle_interrupt
+
+    ;Clean up the CR2 from the stack, we wont restore (maybe you can, but i wont in case of side effect)
+    add rsp, 8
 
     ;We restore the registers we pushed
     pop r15
@@ -50,13 +57,13 @@ interrupt_handler_wrapper:
     pop r10
     pop r9
     pop r8
+    pop rbp
     pop rdi
     pop rsi
     pop rdx
     pop rcx
     pop rbx
     pop rax
-    pop rbp
 
     ;Clean up the stack, where we pushed the interrupt number, and error code
     ;It does not matter if we or the CPU pushed the error code, it needs to be gone
