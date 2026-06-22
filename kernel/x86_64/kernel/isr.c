@@ -20,3 +20,7 @@ void handle_interrupt(interrupt_frame *int_frame) {
     //In case we go past hlt
     while (1);
 }
+
+void isr_register_interrupt_handler(uint8_t interrupt_num, isr_t handler) {
+    interrupt_handler_table[interrupt_num] = handler;
+}
