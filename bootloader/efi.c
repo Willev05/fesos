@@ -416,6 +416,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     map = get_memory_map(&map_size, &descriptor_size, &map_key, SystemTable);
     BootInfo->mmap = (uint64_t)map;
     BootInfo->mmap_size = (uint64_t)map_size;
+    BootInfo->descriptor_size = (uint64_t)descriptor_size;
 
     //We finally leave the UEFI space!
     status = SystemTable->BootServices->ExitBootServices(ImageHandle, map_key);

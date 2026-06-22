@@ -90,7 +90,7 @@ void pmm_init(uint64_t bi_v, uint64_t bi_p, uint64_t identity_PDPT_p) {
     //Since it was a 2MB pages, we can simply stop at PD.
     for(uint64_t i = 0; i < 512; i++) {
         if (identity_PDPT->entries[i].raw) {
-            unset_bitmap_bit(identity_PDPT->entries[i].bits.physical_address);
+            unset_bitmap_bit(identity_PDPT->entries[i].bits.physical_address >> 12);
         }
     }
     unset_bitmap_bit(identity_PDPT_p >> 12);
