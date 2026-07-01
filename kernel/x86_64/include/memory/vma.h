@@ -48,3 +48,4 @@ void *vma_allocate_memory_from_ktree(uint64_t size, vm_node_type allocation_type
 void *vma_allocate_memory_from_utree(uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing);
 void vma_free_memory_from_ktree(uint64_t start_addr);
 void vma_free_memory_from_utree(uint64_t start_addr);
+uint8_t vma_demand_paging(uint64_t fault_addr, uint8_t is_user);

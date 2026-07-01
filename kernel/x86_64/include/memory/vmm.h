@@ -1,5 +1,7 @@
 #pragma once
 #include <stdint.h>
+#include "../kernel/isr.h"
+
 #define DIRECT_MAP_BASE 0xFFFF888000000000
 #define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000
 
@@ -70,3 +72,4 @@ void vmm_init(uint64_t bi_v);
 int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags);
 int vmm_unmap(uint64_t v_addr, uint64_t pages);
 uint64_t vmm_get_physical_from_virtual(uint64_t v_addr);
+void vmm_page_fault_callback(interrupt_frame *iframe);

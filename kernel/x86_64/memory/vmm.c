@@ -1,7 +1,9 @@
-#include "../include/memory/vmm.h"
-#include "../include/memory/pmm.h"
+#include "../include/memory/memory.h"
 #include "../include/kernel/boot_info.h"
 #include "../include/common/stdtypes.h"
+#include "../include/drivers/serial.h"
+#include "../include/common/stdstr.h"
+#include "../include/kernel/panic.h"
 
 static page_table *PML4; 
 
@@ -116,6 +118,31 @@ uint64_t vmm_get_physical_from_virtual(uint64_t v_addr) {
     uint64_t PT_index = (v_addr >> 12) & 0x1FF;
 
     return PT->entries[PT_index].bits.physical_address << 12;
+}
+
+void vmm_page_fault_callback(interrupt_frame *iframe) {
+    char buffer[19];
+
+    uint64_t invalid_address = iframe->cr2;
+    uint8_t is_present = iframe->error_code & 0x1;
+    uint8_t is_write = iframe->error_code & 0x2;
+    uint8_t is_user = iframe->error_code & 0x4;
+
+    //Here, we will handle demand paging.
+    if (!is_present) {
+        //We let the vma handle it. If it returns 0, then we assume it was a valid request and return to the proper flow.
+        if (!vma_demand_paging(invalid_address, is_user)) return;
+        serial_puts("Demand paging returns invalid address, continuing fault handler...\n"); //CHECK THE VMA TREE after saying this since i think tree breaks itself swomewhere, or a function is tweaking out.
+    }
+
+    serial_puts("Page fault! Invalid address access at ");
+    ultox(invalid_address, buffer, 19);
+    serial_puts(buffer);
+    serial_puts(" from instruction located at ");
+    ultox(iframe->rip, buffer, 19);
+    serial_puts(buffer);
+    serial_puts(".\n");
+    kernel_panic("Cannot recover from page fault.\n");   
 }
 
 static page_table *vmm_walk_and_crate_next_table(page_table *table, uint16_t index) {

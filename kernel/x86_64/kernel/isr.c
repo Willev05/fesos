@@ -2,6 +2,7 @@
 #include "../include/kernel/isr.h"
 #include "../include/drivers/serial.h"
 #include "../include/common/stdstr.h"
+#include "../include/kernel/panic.h"
 
 static isr_t interrupt_handler_table[256];
 
@@ -13,12 +14,10 @@ void handle_interrupt(interrupt_frame *int_frame) {
     }
 
     serial_puts("Unhandled interrupt: ");
-    kultoa(int_frame->interrupt_number, buffer, 8);
+    ultoa(int_frame->interrupt_number, buffer, 8);
     serial_puts(buffer);
     serial_puts("\n");
-    __asm__ volatile ("hlt");
-    //In case we go past hlt
-    while (1);
+    kernel_panic("Cannot recover from unhandled exception.");
 }
 
 void isr_register_interrupt_handler(uint8_t interrupt_num, isr_t handler) {

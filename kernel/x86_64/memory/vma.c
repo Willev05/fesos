@@ -16,8 +16,8 @@ uint8_t in_replenish_cycle = 0;
 void replenish_slab_from_tree();
 vm_ds_node *alloc_vm_ds_node();
 void free_vm_ds_node(vm_ds_node *node);
-void *vma_allocate_memory_from_tree(vm_ds_node *root, uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing);
-void vma_free_memory_from_tree(vm_ds_node *root, uint64_t start_addr);
+void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing);
+void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr);
 
 //All VM Data Structure functions
 void vm_ds_init_node(vm_ds_node *node, uint64_t start, uint64_t size, vm_node_type type);
@@ -29,8 +29,25 @@ vm_ds_node *vm_ds_rotate_right(vm_ds_node *node);
 vm_ds_node *vm_ds_rotate_left(vm_ds_node *node);
 vm_ds_node *vm_ds_bubble_update_and_balance(vm_ds_node *node);
 vm_ds_node *vm_ds_remove(vm_ds_node *root, vm_ds_node *node_to_remove);
-vm_ds_node *vm_ds_get_node(vm_ds_node *root, uint64_t start_addr);
+vm_ds_node *vm_ds_get_node(vm_ds_node *root, uint64_t addr);
 vm_ds_node *vm_ds_find_worst_fit(vm_ds_node *root, uint64_t size);
+
+uint8_t vma_demand_paging(uint64_t fault_addr, uint8_t is_user) {
+    //We start by checking if it is user or supervisor that triggered this to search the peoper tree.
+    vm_ds_node *node_for_address;
+    if (is_user) node_for_address = NULL; //TODO: Implement when userland exists.
+    else node_for_address = vm_ds_get_node(kernel_vma_heap_tree_root, fault_addr); //Only kernel heap is tracked by VMA and has demand paging.
+
+    if (!node_for_address) return 1; //Return error that the address is in fact invalid.
+    if (node_for_address->type == VMA_FREE) return 1; //Also return error if the address is still marked as free.
+    //TODO: Handle file-backed memory.
+    //We handle the conventional memory here.
+    //We then need to allocate a frame for this.
+    uint64_t physical_frame = (uint64_t)pmm_allocate_frames(1, 4096);
+    //And then map it to the page this address is part of.
+    vmm_map(fault_addr, physical_frame, 1, node_for_address->flags);
+    return 0;
+}
 
 void vma_init() {
     //We need to initialize the kernel VMA tree. For this, we need a page to hold our starting nodes for the tree.
@@ -69,8 +86,8 @@ void vma_init() {
 }
 
 void vma_free_memory_from_ktree(uint64_t start_addr) {
-    if (start_addr >= KERNEL_HEAP_START && start_addr < KERNEL_HEAP_LIMIT) vma_free_memory_from_tree(kernel_vma_heap_tree_root, start_addr);
-    else if (start_addr >= KERNEL_MMIO_START && start_addr < KERNEL_MMIO_LIMIT) vma_free_memory_from_tree(kernel_vma_mmio_tree_root, start_addr);
+    if (start_addr >= KERNEL_HEAP_START && start_addr < KERNEL_HEAP_LIMIT) vma_free_memory_from_tree(&kernel_vma_heap_tree_root, start_addr);
+    else if (start_addr >= KERNEL_MMIO_START && start_addr < KERNEL_MMIO_LIMIT) vma_free_memory_from_tree(&kernel_vma_mmio_tree_root, start_addr);
 }
 
 void vma_free_memory_from_utree(uint64_t start_addr) {
@@ -80,20 +97,20 @@ void vma_free_memory_from_utree(uint64_t start_addr) {
 void *vma_allocate_memory_from_ktree(uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
     //We allocate to the heap tree unless it is an MMIO request.
     if (allocation_type == VMA_HARDWARE_MMIO) {
-        return vma_allocate_memory_from_tree(kernel_vma_mmio_tree_root, size, allocation_type, flags, allocation_backing);
+        return vma_allocate_memory_from_tree(&kernel_vma_mmio_tree_root, size, allocation_type, flags, allocation_backing);
     }
-    return vma_allocate_memory_from_tree(kernel_vma_heap_tree_root, size, allocation_type, flags, allocation_backing);
+    return vma_allocate_memory_from_tree(&kernel_vma_heap_tree_root, size, allocation_type, flags, allocation_backing);
 }
 
 void *vma_allocate_memory_from_utree(uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
     return NULL; //TODO: Implement when userspace exists
 }
 
-void *vma_allocate_memory_from_tree(vm_ds_node *root, uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
+void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
     //allocation_backing will be copied over, node will NOT point to the specific allocation_backing passed in. NULL can be passed when allocating normal memory.
     if (allocation_type == VMA_FREE) return NULL;
     //We need to locate the worst fit for this request.
-    vm_ds_node *node_for_request = vm_ds_find_worst_fit(root, size);
+    vm_ds_node *node_for_request = vm_ds_find_worst_fit(*root, size);
 
     //We will allocate from the start to either the whole block or up to a part.
     if (size == node_for_request->size) {
@@ -102,17 +119,18 @@ void *vma_allocate_memory_from_tree(vm_ds_node *root, uint64_t size, vm_node_typ
         node_for_request->flags = flags;
     }
     else {
-        //Start by prepping the requested node with the data from the request.
-        node_for_request->type = allocation_type;
-        node_for_request->flags = flags;
-
         //We need to get a node for the remaining hole after the allocation.
         vm_ds_node *node_for_leftover = alloc_vm_ds_node();
         uint64_t leftover_start = node_for_request->start_addr + size - 1; // -1 since the size includes starting address.
         vm_ds_init_node(node_for_leftover, leftover_start, node_for_request->size - size, VMA_FREE);
 
+        //Start by prepping the requested node with the data from the request.
+        node_for_request->type = allocation_type;
+        node_for_request->flags = flags;
+        node_for_request->size = size;
+
         //Then, simply insert into the tree.
-        vm_ds_insert(root, node_for_leftover);
+        *root = vm_ds_insert(*root, node_for_leftover);
     }
 
     //Now, we need to do the backing for the virtual memory.
@@ -134,9 +152,9 @@ void *vma_allocate_memory_from_tree(vm_ds_node *root, uint64_t size, vm_node_typ
     return (void *)node_for_request->start_addr;
 }
 
-void vma_free_memory_from_tree(vm_ds_node *root, uint64_t start_addr) {
+void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     //We first need to find this node from the tree. It needs to be the start_address of the requested block.
-    vm_ds_node *node_to_free = vm_ds_get_node(root, start_addr);
+    vm_ds_node *node_to_free = vm_ds_get_node(*root, start_addr);
 
     //We then need to free the underlying physical memory and invalidate the vmm mapping.
     if (node_to_free->type == VMA_HARDWARE_MMIO) {
@@ -170,8 +188,8 @@ void vma_free_memory_from_tree(vm_ds_node *root, uint64_t start_addr) {
         predecessor->size = new_block_size;
 
         //We then delete both other nodes!
-        vm_ds_remove(root, successor);
-        vm_ds_remove(root, node_to_free);
+        *root = vm_ds_remove(*root, successor);
+        *root = vm_ds_remove(*root, node_to_free);
 
         //Lastly, readd them to the free node pool.
         successor->start_addr = (uint64_t)node_to_free;
@@ -188,7 +206,7 @@ void vma_free_memory_from_tree(vm_ds_node *root, uint64_t start_addr) {
         predecessor->size = new_block_size;
 
         //We then delete the other node!
-        vm_ds_remove(root, node_to_free);
+        *root = vm_ds_remove(*root, node_to_free);
 
         //Lastly, readd them to the free node pool.
         node_to_free->start_addr = (uint64_t)free_list;
@@ -205,7 +223,7 @@ void vma_free_memory_from_tree(vm_ds_node *root, uint64_t start_addr) {
         node_to_free->type = VMA_FREE;
 
         //We then delete the other node!
-        vm_ds_remove(root, successor);
+        *root = vm_ds_remove(*root, successor);
 
         //Lastly, readd them to the free node pool.
         successor->start_addr = (uint64_t)free_list;
@@ -222,7 +240,7 @@ void vma_free_memory_from_tree(vm_ds_node *root, uint64_t start_addr) {
 void replenish_slab_from_tree() {
     //We want to get as many nodes that can fit in one page
     uint32_t node_per_page = 4096 / sizeof(vm_ds_node);
-    vm_ds_node *start_of_page = (vm_ds_node*)vma_allocate_memory_from_tree(kernel_vma_heap_tree_root, 4096, VMA_REGULAR, PT_GLOBAL | PT_WRITEABLE | PT_NX, NULL);
+    vm_ds_node *start_of_page = (vm_ds_node*)vma_allocate_memory_from_tree(&kernel_vma_heap_tree_root, 4096, VMA_REGULAR, PT_GLOBAL | PT_WRITEABLE | PT_NX, NULL);
 
     //We then set them up to be put in our free list. We go until the before-last one. The last will point to the other list, handled outside this loop.
     for (uint32_t i = 0; i < node_per_page - 1; i++) {
@@ -303,13 +321,14 @@ vm_ds_node *vm_ds_insert(vm_ds_node *root, vm_ds_node *node_to_insert) {
     new_root = vm_ds_check_and_balance(root);
     return new_root;
 }
-//TODO: Fix this function. Make sure the node never considers itself for max_size_subtree if it is not a free block!
+
 void vm_ds_update(vm_ds_node *node) {
     if (!node) return;
     //Start by calculating the max free slot size for the subtree. It will be either the data from the chilren's subtrees or the node itself may be the biggest.
     uint64_t max_size_left_subtree = (node->left) ? node->left->subtree_max_free_slot : 0;
     uint64_t max_size_right_subtree = (node->right) ? node->right->subtree_max_free_slot : 0;
-    node->subtree_max_free_slot = (MAX(max_size_left_subtree, max_size_right_subtree), node->size);
+    uint64_t node_size_to_be_considered = (node->type == VMA_FREE) ? node->size : 0;
+    node->subtree_max_free_slot = MAX(MAX(max_size_left_subtree, max_size_right_subtree), node_size_to_be_considered);
 
     //Max depth calculation. Simply the max of either child, and add 1.
     int max_depth_left_subtree = (node->left) ? node->left->subtree_max_depth : -1;
@@ -434,11 +453,11 @@ vm_ds_node *vm_ds_bubble_update_and_balance(vm_ds_node *node) {
     }
 }
 
-vm_ds_node *vm_ds_get_node(vm_ds_node *root, uint64_t start_addr) {
+vm_ds_node *vm_ds_get_node(vm_ds_node *root, uint64_t addr) {
     if (!root) return NULL;
-    if (root->start_addr == start_addr) return root;
-    if (root->start_addr > start_addr) return vm_ds_get_node(root->left, start_addr);
-    return vm_ds_get_node(root->right, start_addr);
+    if (root->start_addr <= addr && root->start_addr + root->size > addr) return root;
+    if (root->start_addr > addr) return vm_ds_get_node(root->left, addr);
+    return vm_ds_get_node(root->right, addr);
 }
 
 //Function is not responsible for freeing the node! Do not lose the pointer!
@@ -496,7 +515,7 @@ vm_ds_node *vm_ds_find_worst_fit(vm_ds_node *root, uint64_t size) {
     if (root->subtree_max_free_slot < size) return NULL;
 
     //Now, we want the max_free_slot so we find it :)
-    if (root->size == root->subtree_max_free_slot) return root;
+    if (root->size == root->subtree_max_free_slot && root->type == VMA_FREE) return root;
     if (root->left && root->left->subtree_max_free_slot == root->subtree_max_free_slot) return vm_ds_find_worst_fit(root->left, size);
     if (root->right && root->right->subtree_max_free_slot == root->subtree_max_free_slot) return vm_ds_find_worst_fit(root->right, size);
 
