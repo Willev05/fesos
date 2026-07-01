@@ -132,7 +132,7 @@ void vmm_page_fault_callback(interrupt_frame *iframe) {
     if (!is_present) {
         //We let the vma handle it. If it returns 0, then we assume it was a valid request and return to the proper flow.
         if (!vma_demand_paging(invalid_address, is_user)) return;
-        serial_puts("Demand paging returns invalid address, continuing fault handler...\n"); //CHECK THE VMA TREE after saying this since i think tree breaks itself swomewhere, or a function is tweaking out.
+        serial_puts("Demand paging returns invalid address, continuing fault handler...\n");
     }
 
     serial_puts("Page fault! Invalid address access at ");
