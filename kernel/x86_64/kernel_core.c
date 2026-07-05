@@ -6,6 +6,7 @@
 #include "include/kernel/gdt.h"
 #include "include/kernel/isr.h"
 #include "include/common/stdtypes.h"
+#include "include/memory/kmalloc.h"
 
 uint32_t magic_number = 0xDEADC0DE;
 
@@ -43,13 +44,22 @@ void _start(boot_info *BootInfo) {
     pmm_init((uint64_t)BootInfo, BootInfo_p, identity_PDPT_p);
     vmm_init((uint64_t)BootInfo);
     vma_init();
+    isr_register_interrupt_handler(14, vmm_page_fault_callback);
 
     serial_puts("Finished memory manager init.\n");
 
-    isr_register_interrupt_handler(14, vmm_page_fault_callback);
+    kmalloc_init();
+
+    serial_puts("Finished kmalloc init.\n");
     
-    uint64_t *massive_integer = vma_allocate_memory_from_ktree(4096, VMA_REGULAR, PT_GLOBAL | PT_WRITEABLE | PT_NX, NULL);
+    volatile uint64_t *massive_integer = kmalloc(sizeof(uint64_t));
     *massive_integer = 502;
+
+    volatile uint64_t *another_massive_integer = kmalloc(sizeof(uint64_t));
+    *another_massive_integer = 441;
+
+    volatile boot_info *bf2 = kmalloc(sizeof(boot_info));
+    bf2->kernel_size = 0x6435;
 
     serial_puts("Hello from the kernel!\n");
 

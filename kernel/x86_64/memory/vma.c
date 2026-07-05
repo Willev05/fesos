@@ -121,7 +121,7 @@ void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_ty
     else {
         //We need to get a node for the remaining hole after the allocation.
         vm_ds_node *node_for_leftover = alloc_vm_ds_node();
-        uint64_t leftover_start = node_for_request->start_addr + size - 1; // -1 since the size includes starting address.
+        uint64_t leftover_start = node_for_request->start_addr + size;
         vm_ds_init_node(node_for_leftover, leftover_start, node_for_request->size - size, VMA_FREE);
 
         //Start by prepping the requested node with the data from the request.
