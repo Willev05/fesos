@@ -61,6 +61,9 @@ void _start(boot_info *BootInfo) {
     volatile boot_info *bf2 = kmalloc(sizeof(boot_info));
     bf2->kernel_size = 0x6435;
 
+    volatile uint64_t *page_int = kmalloc(2798);
+    *page_int = 8321897;
+
     serial_puts("Hello from the kernel!\n");
 
     while (1) {

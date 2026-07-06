@@ -25,6 +25,19 @@ void *kmalloc(size_t size) {
     if (!size) return NULL;
     uint8_t bucket_id = get_bucket_from_size(size);
 
+    //If the bucket is 255, we need to pass the request to the vma for allocating pure pages.
+    if (bucket_id == 255) {
+        //Overflow-proof rounding in case very high memory is requestd. Wont ever happen (shouldn't) but yeah.
+        size_t remainder = size % 4096;
+        size_t rounded_size;
+        if (!remainder) rounded_size = size;
+        else rounded_size = size + (4096 - remainder);
+
+        //Then simply call the vma allocator.
+        void *address = vma_allocate_memory_from_ktree(rounded_size, VMA_REGULAR, PT_WRITEABLE | PT_NX | PT_GLOBAL, NULL);
+        return address;
+    }
+
     //Check to see if the bucket has any free slots.
     if (!buckets[bucket_id].free_page_list) allocate_page_for_bucket(bucket_id);
 
