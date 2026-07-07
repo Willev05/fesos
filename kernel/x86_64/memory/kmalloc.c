@@ -3,8 +3,8 @@
 #include "../include/common/math.h"
 #define SMALL_BUCKET_AGGREGATES 4 //Since 1, 2, 4, 8 will get tossed with 16 byte bucket.
 
-//16, 32, 64, 128, 256, 512, 1024, 2048.
-static kmalloc_bucket_t buckets[8];
+//16, 32, 64, 128, 256, 512, 1024.
+static kmalloc_bucket_t buckets[7];
 
 static uint8_t get_bucket_from_size(size_t size);
 static void allocate_page_for_bucket(uint8_t bucket_id);
@@ -17,7 +17,6 @@ void kmalloc_init() {
     buckets[4].bucket_size = 256;
     buckets[5].bucket_size = 512;
     buckets[6].bucket_size = 1024;
-    buckets[7].bucket_size = 2048;
 }
 
 void *kmalloc(size_t size) {
@@ -64,14 +63,59 @@ void *kmalloc(size_t size) {
 }
 
 void kfree(void *ptr) {
+    //We will start by getting the page descriptor for this returned pointer.
+    uint64_t v_addr = (uint64_t)ptr;
+    //We check wether or not the ptr passed was allocated through a page or bucket. If the ptr is page alligned, it was page allocation since buckets will NEVER return a page alligned pointer (since metadata lives there)
+    if ((v_addr & 0xFFF) == 0) vma_free_memory_from_ktree(v_addr);
 
+    kmalloc_page_descriptor_t *page_descriptor = (kmalloc_page_descriptor_t*)(v_addr & ~(0xFFFULL));
+    
+    //We then want to internally put this block back in the free list for the page.
+    *(uint64_t*)v_addr = page_descriptor->free_list;
+    page_descriptor->free_list = v_addr;
+
+    //Decrement the block in use.
+    page_descriptor->blocks_in_use--;
+
+    //We wanna check if the new pointer freeing will make this page not full anymore. If so, it can be returned to the free pool on the bucket level.
+    if (page_descriptor->blocks_in_use + 1 == page_descriptor->total_blocks) { 
+        kmalloc_bucket_t *bucket_descriptor = &buckets[page_descriptor->bucket_index];
+        //We wanna first update the list for the full pages.
+        //Start by updating the previous page (can be the pointer on the bucket struct).
+        if (!page_descriptor->prev_page_descriptor) bucket_descriptor->full_page_list = page_descriptor->next_page_descriptor;
+        else page_descriptor->prev_page_descriptor->next_page_descriptor = page_descriptor->next_page_descriptor;
+        //Then we wanna update the next page's previous page value.
+        if (page_descriptor->next_page_descriptor) page_descriptor->next_page_descriptor->prev_page_descriptor = page_descriptor->prev_page_descriptor;
+        
+        //Then, we need to insert at the head of the free list.
+        if (bucket_descriptor->free_page_list) bucket_descriptor->full_page_list->prev_page_descriptor = page_descriptor;
+        page_descriptor->prev_page_descriptor = NULL;
+        page_descriptor->next_page_descriptor = buckets->full_page_list;
+        buckets->full_page_list = page_descriptor;
+        return;
+    }
+    //We check if the page is now empty, if so, we cull it.
+    if (!page_descriptor->blocks_in_use) {
+        //Page will always be in free if it is ready to be culled.
+        kmalloc_bucket_t *bucket_descriptor = &buckets[page_descriptor->bucket_index];
+        //We wanna update the list for the free pages.
+        //Start by updating the previous page (can be the pointer on the bucket struct).
+        if (!page_descriptor->prev_page_descriptor) bucket_descriptor->free_page_list = page_descriptor->next_page_descriptor;
+        else page_descriptor->prev_page_descriptor->next_page_descriptor = page_descriptor->next_page_descriptor;
+        //Then we wanna update the next page's previous page value.
+        if (page_descriptor->next_page_descriptor) page_descriptor->next_page_descriptor->prev_page_descriptor = page_descriptor->prev_page_descriptor;
+
+        //Now, we can safely free this page at the vma level.
+        vma_free_memory_from_ktree((uint64_t)page_descriptor);
+        return;
+    }
 }
 
 //Private static helper functions. 
 //Assumes size is NOT 0.
 static uint8_t get_bucket_from_size(size_t size) {
     //If the request is too big or small for the buckets, return the appropriate index/exit flag.
-    if (size > 2048) return 255; //This will be the "page allocator required" flag. 
+    if (size > 1024) return 255; //This will be the "page allocator required" flag. 
     if (size < 16) return 0; //The smaller request will fall into the 16 byte requests.
 
     //We get the leading and trailing zeros to see what bucket to stuff the request into. 

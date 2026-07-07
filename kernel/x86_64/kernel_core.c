@@ -64,6 +64,11 @@ void _start(boot_info *BootInfo) {
     volatile uint64_t *page_int = kmalloc(2798);
     *page_int = 8321897;
 
+    kfree(massive_integer);
+    kfree(another_massive_integer);
+    kfree(bf2);
+    kfree(page_int);
+
     serial_puts("Hello from the kernel!\n");
 
     while (1) {
