@@ -163,7 +163,7 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     }
     else if (node_to_free->type == VMA_FILE_BACKED || node_to_free->type == VMA_REGULAR) {
         //Both of these will have possibly non-contiguous frames in RAM. We need to free them in PMM before doing VMM unmap.
-        for (uint64_t current_v_addr = node_to_free->start_addr; current_v_addr < current_v_addr + node_to_free->size; current_v_addr += 0x1000) {
+        for (uint64_t current_v_addr = node_to_free->start_addr; current_v_addr < node_to_free->start_addr + node_to_free->size; current_v_addr += 0x1000) {
             uint64_t phys_addr = vmm_get_physical_from_virtual(current_v_addr);
             pmm_free_frames((void *)phys_addr, 1);
         }
