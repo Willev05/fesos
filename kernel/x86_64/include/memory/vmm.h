@@ -1,7 +1,24 @@
+#pragma once
 #include <stdint.h>
+#include "../kernel/isr.h"
+
 #define DIRECT_MAP_BASE 0xFFFF888000000000
 #define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000
+
+//Grows down
 #define KERNEL_STACK_BASE 0xFFFFFFFF80000000
+#define KERNEL_STACK_SIZE (2ULL * 1024 * 1024) //2MB
+#define KERNEL_STACK_LIMIT (KERNEL_STACK_BASE - KERNEL_STACK_SIZE) //0xFFFFFFFF7FE00000
+
+//Grows up
+#define KERNEL_HEAP_START (KERNEL_HEAP_LIMIT - KERNEL_HEAP_SIZE) //0xFFFFFFFB7FDFF000
+#define KERNEL_HEAP_SIZE (16ULL * 1024 * 1024 * 1024) //16GB
+#define KERNEL_HEAP_LIMIT (KERNEL_STACK_LIMIT - 4096) //Guard page added for padding, should be 0xFFFFFFFF7FDFF000
+
+//Grows up
+#define KERNEL_MMIO_START (KERNEL_HEAP_LIMIT - KERNEL_HEAP_SIZE) //0xFFFFFFF77FDFE000
+#define KERNEL_MMIO_SIZE (16ULL * 1024 * 1024 * 1024) //16GB
+#define KERNEL_MMIO_LIMIT (KERNEL_HEAP_START - 4096) //Guard page added for padding, should be 0xFFFFFFFB7FDFE000
 
 //This will represent all the bits in an entry for the page table.
 typedef struct {
@@ -41,3 +58,18 @@ typedef union {
 typedef struct {
     page_table_entry entries[512];
 } page_table;
+
+//Flags for vmm map
+#define PT_WRITEABLE 0x1
+#define PT_USER_AVAILABLE 0x2
+#define PT_WRITE_THROUGH 0x4
+#define PT_DISABLE_CACHING 0x8
+#define PT_HUGE_PAGE 0x10
+#define PT_GLOBAL 0x20
+#define PT_NX 0x40
+
+void vmm_init(uint64_t bi_v);
+int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags);
+int vmm_unmap(uint64_t v_addr, uint64_t pages);
+uint64_t vmm_get_physical_from_virtual(uint64_t v_addr);
+void vmm_page_fault_callback(interrupt_frame *iframe);

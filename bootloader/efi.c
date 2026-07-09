@@ -1,7 +1,8 @@
 #include "efi.h"
-#include "../kernel/x86_64/include/elf.h"
-#include "../kernel/x86_64/include/boot_info.h"
-#include "../kernel/x86_64/include/memory.h"
+#include "../kernel/x86_64/include/kernel/elf.h"
+#include "../kernel/x86_64/include/kernel/boot_info.h"
+#include "../kernel/x86_64/include/memory/memory.h"
+#include "../kernel/x86_64/include/common/stdtypes.h"
 
 uint16_t *EFIAPI to_string(uint64_t input);
 uint16_t *EFIAPI to_string_hex(uint64_t input);
@@ -58,7 +59,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     //Now, we open the kernel core file, which sits on the root.
     EFI_FILE_PROTOCOL *kernel_file;
-    status = root->Open(root, &kernel_file, L"kernel_core.elf", 1, 0);
+    status = root->Open(root, &kernel_file, L"kcore.elf", 1, 0);
     check_EFI_error(status, L"Unable to find or open kernel file!", SystemTable);
 
     //Get the file size
@@ -147,10 +148,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     check_EFI_error(status, L"Cannot allocate page for PML4 table!", SystemTable);
     SystemTable->BootServices->SetMem((void*)PML4, 4096, 0);
     BootInfo->PML4 = (uint64_t)PML4;
-    
-    SystemTable->conout->OutputString(SystemTable->conout, L"PML4 Address: ");
-    SystemTable->conout->OutputString(SystemTable->conout, to_string_hex((uint64_t)PML4));
-    SystemTable->conout->OutputString(SystemTable->conout, L"\r\n");
 
     //We need to get the memory map for the maximum ram address.
     UINTN map_size;
@@ -165,15 +162,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     //Now, lets map the memory!
     uint8_t *map_ptr = (uint8_t*)map;
+    //While we do this, we will get the max memory address from the map, and allocate the bitmap to simplify life for our pmm.
+    uint64_t max_memory_address = 0;
     for (uint64_t i = 0; i < map_size; i += descriptor_size) {
-        map = (EFI_MEMORY_DESCRIPTOR*)map_ptr;
+        EFI_MEMORY_DESCRIPTOR *map = (EFI_MEMORY_DESCRIPTOR*)(map_ptr + i);
         if (map->Type != EfiConventionalMemory &&
         map->Type != EfiLoaderCode &&
         map->Type != EfiLoaderData &&
         map->Type != EfiBootServicesCode &&
         map->Type != EfiBootServicesData &&
-        map->Type != EfiACPIReclaimMemory &&
-        map->Type != EfiACPIMemoryNVS
+        map->Type != EfiACPIReclaimMemory
         ) continue;
 
         uint64_t low_bound_phys = map->PhysicalStart & ~0x1FFFFFULL;
@@ -221,7 +219,30 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
             PD->entries[PD_index].bits.global = 1;
             PD->entries[PD_index].bits.physical_address = (current_address >> 12) & ~0x1FFULL;
         }
+
+        //Calculate the max address.
+        max_memory_address = (map->PhysicalStart + 4096 * map->NumberOfPages > max_memory_address) ? map->PhysicalStart + 4096 * map->NumberOfPages : max_memory_address;
     } 
+
+    //Calculate the size of our bitmap and allocate it for later use.
+    uint64_t bitmap_size = (((max_memory_address + 4095) / 4096) + 7) / 8;
+    EFI_PHYSICAL_ADDRESS bitmap;
+
+    SystemTable->conout->OutputString(SystemTable->conout, L"Max Memory Address: ");
+    SystemTable->conout->OutputString(SystemTable->conout, to_string_hex(max_memory_address));
+    SystemTable->conout->OutputString(SystemTable->conout, L"\r\n");
+    SystemTable->conout->OutputString(SystemTable->conout, L"bitmap size: ");
+    SystemTable->conout->OutputString(SystemTable->conout, to_string_hex(bitmap_size));
+    SystemTable->conout->OutputString(SystemTable->conout, L"\r\n");
+
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, (bitmap_size + 4095) / 4096, &bitmap);
+    check_EFI_error(status, L"Cannot allocate pages for memory bitmap!", SystemTable);
+    //Initialized to 1 -> mark as busy unless told otherwise. Handles potential holes and MMIO, etc.
+    SystemTable->BootServices->SetMem((void*)bitmap, bitmap_size, 255);
+
+    BootInfo->maximum_address_physical = max_memory_address;
+    BootInfo->memory_bitmap_address = (uint64_t)bitmap;
+    BootInfo->memory_bitmap_size = bitmap_size;
 
     SystemTable->conout->OutputString(SystemTable->conout, L"Finished direct mapping of memory!\r\n");
 
@@ -319,14 +340,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     PD_index = (bridge_address >> 21) & 0x1FF;
 
     status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PDPT);
-    check_EFI_error(status, L"Cannot allocate page for kernel's PDPT!", SystemTable);
+    check_EFI_error(status, L"Cannot allocate page for assembly bridge's PDPT!", SystemTable);
     SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
     page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
 
     status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PD);
-    check_EFI_error(status, L"Cannot allocate page for kernel's PD!", SystemTable);
+    check_EFI_error(status, L"Cannot allocate page for assembly bridge's PD!", SystemTable);
     SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
     page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
+
+    uint8_t bridge_page_count = 1;
 
     PML4->entries[PML4_index].bits.present = 1;
     PML4->entries[PML4_index].bits.writeable = 1;
@@ -374,7 +397,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
         PD->entries[PD_index].bits.huge_page = 1;
         PD->entries[PD_index].bits.global = 1;
         PD->entries[PD_index].bits.physical_address = (assumed_bridge_end_address >> 12) & ~0x1FFULL;
+
+        bridge_page_count++;
     }
+
+    BootInfo->bridge_size = bridge_page_count;
+    BootInfo->bridge_location = bridge_address;
 
     SystemTable->conout->OutputString(SystemTable->conout, L"Finished kernel mapping of memory!\r\n");
 
@@ -388,6 +416,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     map = get_memory_map(&map_size, &descriptor_size, &map_key, SystemTable);
     BootInfo->mmap = (uint64_t)map;
     BootInfo->mmap_size = (uint64_t)map_size;
+    BootInfo->descriptor_size = (uint64_t)descriptor_size;
 
     //We finally leave the UEFI space!
     status = SystemTable->BootServices->ExitBootServices(ImageHandle, map_key);

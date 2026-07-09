@@ -1,3 +1,4 @@
+#pragma once
 #include <stdint.h>
 
 #define EFIAPI __attribute__((ms_abi))
@@ -20,7 +21,6 @@
 //Basic types
 typedef void* EFI_HANDLE;
 typedef uint64_t EFI_STATUS;
-#define NULL ((void *)0)
 typedef unsigned long long UINTN; //Like uint64_t
 typedef uint64_t EFI_PHYSICAL_ADDRESS; //An address in memory
 typedef uint64_t EFI_VIRTUAL_ADDRESS;
@@ -127,6 +127,7 @@ typedef struct {
 //The memory map type.
 typedef struct {
     EFI_MEMORY_TYPE Type;
+    uint32_t pad;
     EFI_PHYSICAL_ADDRESS PhysicalStart;
     EFI_VIRTUAL_ADDRESS VirtualStart;
     uint64_t NumberOfPages;
