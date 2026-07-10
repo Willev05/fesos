@@ -1,5 +1,6 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Note: Structure definitions derived from the official UEFI Specification. https://uefi.org/sites/default/files/resources/UEFI_Spec_2_10_Aug29.pdf*/
 
 #pragma once
 #include <stdint.h>
