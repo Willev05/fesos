@@ -1,3 +1,6 @@
+/* Copyright (C) 2026 William Lévesque */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
 #include "../include/memory/memory.h"
 #include "../include/kernel/boot_info.h"
 #include "../include/common/stdtypes.h"

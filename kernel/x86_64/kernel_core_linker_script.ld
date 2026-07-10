@@ -1,3 +1,6 @@
+# Copyright (C) 2026 William Lévesque
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 OUTPUT_FORMAT(elf64-x86-64)
 ENTRY(_start)
 

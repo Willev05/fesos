@@ -1,3 +1,6 @@
+; Copyright (C) 2026 William Lévesque
+; SPDX-License-Identifier: GPL-3.0-or-later
+
 [BITS 64]
 DEFAULT REL
 

@@ -1,3 +1,6 @@
+/* Copyright (C) 2026 William Lévesque */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
 #include "../include/memory/vma.h"
 #include "../include/memory/vmm.h"
 #include "../include/memory/pmm.h"

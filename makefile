@@ -1,3 +1,6 @@
+# Copyright (C) 2026 William Lévesque
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 #Directories
 BUILD_DIR := build
 BOOTLOADER_OUT_DIR := $(BUILD_DIR)/iso/EFI/BOOT

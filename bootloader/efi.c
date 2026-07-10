@@ -1,3 +1,6 @@
+/* Copyright (C) 2026 William Lévesque */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
 #include "efi.h"
 #include "../kernel/x86_64/include/kernel/elf.h"
 #include "../kernel/x86_64/include/kernel/boot_info.h"

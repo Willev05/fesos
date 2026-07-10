@@ -1,3 +1,6 @@
+/* Copyright (C) 2026 William Lévesque */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
 #include "../include/kernel/idt.h"
 #include "../include/kernel/isr.h"
 #include "../include/drivers/serial.h"

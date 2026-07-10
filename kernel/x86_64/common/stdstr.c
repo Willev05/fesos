@@ -1,3 +1,6 @@
+/* Copyright (C) 2026 William Lévesque */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
 #include "../include/common/stdstr.h"
 
 int ultoa(uint64_t number, char *buffer, size_t size) {
