@@ -49,3 +49,8 @@ make image
 
 # Launch inside QEMU with debug file enabled
 make run
+```
+## Licensing
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+
+*All interface implementations matching industry standards are derived from open specifications, including the UEFI 2.10 specification.*
