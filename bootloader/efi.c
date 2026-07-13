@@ -11,6 +11,9 @@ uint16_t *EFIAPI to_string(uint64_t input);
 uint16_t *EFIAPI to_string_hex(uint64_t input);
 void EFIAPI check_EFI_error(EFI_STATUS status, uint16_t *error_message, EFI_SYSTEM_TABLE *SystemTable);
 EFI_MEMORY_DESCRIPTOR *EFIAPI get_memory_map(UINTN *map_size, UINTN *descriptor_size, UINTN *map_key, EFI_SYSTEM_TABLE *SystemTable);
+static void EFIAPI set_bitmap_bit(uint64_t *bitmap, uint64_t bit_number);
+static void EFIAPI unset_bitmap_bit(uint64_t *bitmap, uint64_t bit_number);
+static uint8_t EFIAPI get_bitmap_bit(uint64_t *bitmap, uint64_t bit_number);
 
 extern void __attribute__((sysv_abi)) jump_to_kernel(uint64_t pml4_phys, uint64_t entry_point, uint64_t stack_top, void *BootInfo);
 
@@ -22,10 +25,101 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     EFI_STATUS status = 0;
 
-    //Allocate a page for outr boot struct which we will be filling up.
+    //We need to start by getting the UEFI memory map. Used for getting the max valid address for conventional memory.
+    UINTN map_size;
+    UINTN descriptor_size;
+    EFI_MEMORY_DESCRIPTOR *map = get_memory_map(&map_size, &descriptor_size, NULL, SystemTable);
+
+    //We then get the max memory address of proper EFI_MEMORY_TYPE.
+    uint64_t max_memory_address = 0;
+    uint64_t physical_memory_frame_count;
+    uint64_t physical_memory_used_frame_count;
+    uint8_t *map_ptr = (uint8_t*)map;
+    for (uint64_t i = 0; i < map_size; i += descriptor_size) {
+        EFI_MEMORY_DESCRIPTOR *map = (EFI_MEMORY_DESCRIPTOR*)(map_ptr + i);
+        if (map->Type != EfiConventionalMemory &&
+        map->Type != EfiLoaderCode &&
+        map->Type != EfiLoaderData &&
+        map->Type != EfiBootServicesCode &&
+        map->Type != EfiBootServicesData &&
+        map->Type != EfiACPIReclaimMemory &&
+        map->Type != EfiACPIMemoryNVS &&
+        map->Type != EfiRuntimeServicesCode &&
+        map->Type != EfiRuntimeServicesData
+        ) continue;
+
+        //If we are here, then it is part of the total system ram.
+        physical_memory_frame_count += map->NumberOfPages;
+
+        if (map->Type != EfiConventionalMemory &&
+        map->Type != EfiLoaderCode &&
+        map->Type != EfiLoaderData &&
+        map->Type != EfiBootServicesCode &&
+        map->Type != EfiBootServicesData
+        ) {
+            //This is the used memory.
+            physical_memory_used_frame_count += map->NumberOfPages;
+            continue;
+        }
+        //Here is the actual legal memory for us to use.
+        max_memory_address = (map->PhysicalStart + 4096 * map->NumberOfPages > max_memory_address) ? map->PhysicalStart + 4096 * map->NumberOfPages : max_memory_address;
+    }
+
+    //Now, with the max address, we can simply request UEFI for the pages to store it. We will ask for sequential memory for easy reading like an array.
+    //Calculate the size of our bitmap and allocate it for later use.
+    uint64_t bitmap_size_bytes = (((max_memory_address + 4095) / 4096) + 7) / 8;
+    uint64_t bitmap_frame_count = ((max_memory_address + 4095) / 4096) >> 12;
+    EFI_PHYSICAL_ADDRESS bitmap_paddr;
+    volatile uint64_t *bitmap;
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, (bitmap_size_bytes + 4095) / 4096, &bitmap_paddr);
+    check_EFI_error(status, L"Cannot allocate pages for memory bitmap!", SystemTable);
+    //Initialized to 1 -> mark as busy unless told otherwise. Handles potential holes and MMIO, etc.
+    bitmap = (uint64_t*)bitmap_paddr;
+    SystemTable->BootServices->SetMem((void*)bitmap, bitmap_size_bytes, 255);
+    
+    //Now, we will loop the map, which we will request again from uefi. We will unset bits which can be declared as free. We will unset UEFI loader stuff, since the bitmap will be used ONLY for the kernel, which wont care about it.
+    map = get_memory_map(&map_size, &descriptor_size, NULL, SystemTable);
+    for (uint64_t i = 0; i < map_size; i += descriptor_size) {
+        EFI_MEMORY_DESCRIPTOR *mmap = (EFI_MEMORY_DESCRIPTOR*)(map_ptr + i);
+        if (mmap->Type != EfiConventionalMemory &&
+        mmap->Type != EfiLoaderCode &&
+        mmap->Type != EfiLoaderData &&
+        mmap->Type != EfiBootServicesCode &&
+        mmap->Type != EfiBootServicesData
+        ) continue;
+
+        uint64_t bit_to_change = mmap->PhysicalStart >> 12;
+        for (uint64_t j = 0; j < mmap->NumberOfPages; j++) unset_bitmap_bit(bitmap, bit_to_change++);
+    }
+
+    //Allocate a page for boot struct which we will be filling up.
     boot_info *BootInfo;
     status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS *)&BootInfo);
     check_EFI_error(status, L"Could not allocate a page for the boot struct!", SystemTable);
+
+    //Start filling the BI struct with some data.
+    BootInfo->memory_bitmap_address = (uint64_t)(bitmap_paddr);
+    BootInfo->memory_bitmap_size = bitmap_size_bytes;
+    BootInfo->memory_bitmap_frame_count = bitmap_frame_count;
+    BootInfo->memory_physical_total_frames = physical_memory_frame_count;
+    BootInfo->memory_physical_used_frames = physical_memory_used_frame_count;
+
+    //Now, we can note down any kernel permenent things for the PMM to track. This includes the very bitmap! So we will note it down.
+    uint64_t bit_to_change = (uint64_t)(bitmap_paddr) >> 12;
+    for (uint64_t i = 0; i < (bitmap_size_bytes + 4095) / 4096; i++) {
+        set_bitmap_bit(bitmap, bit_to_change++);
+        BootInfo->memory_physical_used_frames++;
+    } 
+
+    //And also set the first frame to 0 as a sentinel value, and handle like "NULL"/invalid returns from PMM.
+    if (!get_bitmap_bit(bitmap, 0)) {
+        set_bitmap_bit(bitmap, 0);
+        BootInfo->memory_physical_used_frames++;
+    }
+    
+    //The kernel cares about the struct, so save it to the bitmap.
+    set_bitmap_bit(bitmap, (uint64_t)(BootInfo) >> 12);
+    BootInfo->memory_physical_used_frames++;
 
     //Get the linear pixel buffer address.
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
@@ -550,4 +644,16 @@ EFI_MEMORY_DESCRIPTOR *EFIAPI get_memory_map(UINTN *map_size, UINTN *descriptor_
     }
 
     return map;
+}
+
+static void EFIAPI set_bitmap_bit(uint64_t *bitmap,uint64_t bit_number) {
+    bitmap[bit_number / 8] = bitmap[bit_number / 8] | (1 << (bit_number % 8));
+}
+
+static void EFIAPI unset_bitmap_bit(uint64_t *bitmap, uint64_t bit_number) {
+    bitmap[bit_number / 8] = bitmap[bit_number / 8] & ((254 << (bit_number % 8)) | ((1 << (bit_number % 8)) - 1));
+}
+
+static uint8_t EFIAPI get_bitmap_bit(uint64_t *bitmap, uint64_t bit_number) {
+    return (bitmap[bit_number / 8] >> (bit_number % 8) & 0x1);
 }
