@@ -4,7 +4,7 @@
 #include "efi.h"
 #include "../kernel/x86_64/include/kernel/elf.h"
 #include "../kernel/x86_64/include/kernel/boot_info.h"
-#include "../kernel/x86_64/include/memory/memory.h"
+#include "../kernel/x86_64/include/memory/vmm.h"
 #include "../kernel/x86_64/include/common/stdtypes.h"
 
 uint16_t *EFIAPI to_string(uint64_t input);
@@ -14,6 +14,8 @@ EFI_MEMORY_DESCRIPTOR *EFIAPI get_memory_map(UINTN *map_size, UINTN *descriptor_
 static void EFIAPI set_bitmap_bit(uint64_t *bitmap, uint64_t bit_number);
 static void EFIAPI unset_bitmap_bit(uint64_t *bitmap, uint64_t bit_number);
 static uint8_t EFIAPI get_bitmap_bit(uint64_t *bitmap, uint64_t bit_number);
+page_table EFIAPI *walk_and_crate_next_table(uint64_t *bitmap, EFI_SYSTEM_TABLE *sys_table, page_table *table, uint16_t index);
+void EFIAPI map_vaddr_to_paddr(uint64_t *bitmap, EFI_SYSTEM_TABLE *sys_table, page_table *PML4, uint64_t vaddr, uint64_t paddr, uint64_t flags);
 
 extern void __attribute__((sysv_abi)) jump_to_kernel(uint64_t pml4_phys, uint64_t entry_point, uint64_t stack_top, void *BootInfo);
 
@@ -656,4 +658,64 @@ static void EFIAPI unset_bitmap_bit(uint64_t *bitmap, uint64_t bit_number) {
 
 static uint8_t EFIAPI get_bitmap_bit(uint64_t *bitmap, uint64_t bit_number) {
     return (bitmap[bit_number / 8] >> (bit_number % 8) & 0x1);
+}
+
+page_table EFIAPI *walk_and_crate_next_table(uint64_t *bitmap, EFI_SYSTEM_TABLE *sys_table, page_table *table, uint16_t index) {
+    page_table *next_table = NULL;
+    EFI_STATUS status;
+    if (!table->entries[index].bits.present) {
+        //Allocate a page table
+        EFI_PHYSICAL_ADDRESS next_table_p;
+        status = sys_table->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &next_table_p);
+        check_EFI_error(status, L"Unable to allocate page for a page table!", sys_table);
+        next_table = (page_table*)(next_table_p + DIRECT_MAP_BASE);
+        sys_table->BootServices->SetMem((void*)next_table, 4096, 0);
+
+        //And prep it.
+        table->entries[index].bits.present = 1;
+        table->entries[index].bits.writeable = 1;
+        table->entries[index].bits.user_available = 1;
+        table->entries[index].bits.physical_address = next_table_p >> 12;
+    }
+    else next_table = (page_table*)((table->entries[index].bits.physical_address << 12) + DIRECT_MAP_BASE);
+
+    return next_table;
+}
+
+void EFIAPI map_vaddr_to_paddr(uint64_t *bitmap, EFI_SYSTEM_TABLE *sys_table, page_table *PML4, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
+    uint16_t PML4_index = (vaddr >> 39) & 0x1FF;
+    uint16_t PDPT_index = (vaddr >> 30) & 0x1FF;
+    uint16_t PD_index = (vaddr >> 21) & 0x1FF;
+
+    page_table *PDPT = walk_and_crate_next_table(bitmap, sys_table, PML4, PML4_index);
+    page_table *PD = walk_and_crate_next_table(bitmap, sys_table, PDPT, PDPT_index);
+    
+    //Here, we need to check if this will be a huge page or not.
+    if (flags & 0x10) {
+        //We assume the VMA or other caller will have the addresses alligned to the 2MB mark.
+        PD->entries[PD_index].bits.present = 1;
+        PD->entries[PD_index].bits.writeable = (flags & 0x1);
+        PD->entries[PD_index].bits.user_available = (flags & 0x2) >> 1;
+        PD->entries[PD_index].bits.write_through = (flags & 0x4) >> 2;
+        PD->entries[PD_index].bits.disable_caching = (flags & 0x8) >> 3;
+        PD->entries[PD_index].bits.huge_page = 1;
+        PD->entries[PD_index].bits.global = (flags & 0x20) >> 5;
+        PD->entries[PD_index].bits.execute_disable = (flags & 0x40) >> 6;
+
+        PD->entries[PD_index].bits.physical_address = (paddr >> 12) & ~0x1FFULL;
+    }
+        
+    page_table *PT = vmm_walk_and_crate_next_table(PD, PD_index);
+
+    uint64_t PT_index = (vaddr >> 12) & 0x1FF;
+
+    PT->entries[PT_index].bits.present = 1;
+    PT->entries[PT_index].bits.writeable = (flags & 0x1);
+    PT->entries[PT_index].bits.user_available = (flags & 0x2) >> 1;
+    PT->entries[PT_index].bits.write_through = (flags & 0x4) >> 2;
+    PT->entries[PT_index].bits.disable_caching = (flags & 0x8) >> 3;
+    PT->entries[PT_index].bits.global = (flags & 0x20) >> 5;
+    PT->entries[PT_index].bits.execute_disable = (flags & 0x40) >> 6;
+
+    PT->entries[PT_index].bits.physical_address = (paddr >> 12);
 }
