@@ -20,13 +20,7 @@ typedef struct {
     uint64_t memory_physical_total_frames;
     uint64_t memory_physical_used_frames;
 
-    uint64_t kernel_location_physical;
-    uint64_t kernel_location_virtual;
-    uint64_t kernel_size; //In 2MB pages
-    uint64_t kernel_stack_location_physical;
     uint64_t bridge_location;
     uint8_t bridge_size; //In 2MB pages
     uint64_t PML4;
-    uint64_t *page_table_addresses;
-    uint64_t page_table_addresses_count;
 } boot_info;
