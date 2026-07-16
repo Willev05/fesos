@@ -6,6 +6,8 @@ DEFAULT REL
 
 section .text
 global jump_to_kernel
+global gdt64 ;Used as start for the gdt
+global gdt64_ptr ;Used as end boundary for the gdt
 
 ; C function signature: 
 ; void jump_to_kernel(
