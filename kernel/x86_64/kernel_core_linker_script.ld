@@ -10,26 +10,32 @@ SECTIONS
 
     .text : {
         *(.text)
-        *(.rodata*)
-    } :text
+    } :text_rx
 
     /* Force the VIRTUAL address to the next 2MB, 
        but don't pad the FILE size of the previous segment */
-    . = ALIGN(0x200000);
+    . = ALIGN(0x1000);
+
+    .rodata : {
+        *(.rodata*)
+    } :data_ro
+
+    . =ALIGN(0x1000);
 
     .data : {
         *(.data)
-    } :data
+    } :data_rw
 
     .bss : {
         *(.bss)
         *(COMMON)
-    } :data
+    } :data_rw
 }
 
-/* Explicitly define Program Headers to ensure only 2 LOAD segments */
+/* Explicitly define Program Headers to ensure only 3 LOAD segments */
 PHDRS
 {
-    text PT_LOAD FLAGS(5); /* Read (4) + Execute (1) */
-    data PT_LOAD FLAGS(6); /* Read (4) + Write (2) */
+    text_rx PT_LOAD FLAGS(5); /* Read (4) + Execute (1) */
+    data_ro PT_LOAD FLAGS(4);
+    data_rw PT_LOAD FLAGS(6); /* Read (4) + Write (2) */
 }

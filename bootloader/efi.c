@@ -4,13 +4,18 @@
 #include "efi.h"
 #include "../kernel/x86_64/include/kernel/elf.h"
 #include "../kernel/x86_64/include/kernel/boot_info.h"
-#include "../kernel/x86_64/include/memory/memory.h"
+#include "../kernel/x86_64/include/memory/vmm.h"
 #include "../kernel/x86_64/include/common/stdtypes.h"
 
 uint16_t *EFIAPI to_string(uint64_t input);
 uint16_t *EFIAPI to_string_hex(uint64_t input);
-void check_EFI_error(EFI_STATUS status, uint16_t *error_message, EFI_SYSTEM_TABLE *SystemTable);
+void EFIAPI check_EFI_error(EFI_STATUS status, uint16_t *error_message, EFI_SYSTEM_TABLE *SystemTable);
 EFI_MEMORY_DESCRIPTOR *EFIAPI get_memory_map(UINTN *map_size, UINTN *descriptor_size, UINTN *map_key, EFI_SYSTEM_TABLE *SystemTable);
+static void EFIAPI set_bitmap_bit(uint8_t *bitmap, uint64_t bit_number);
+static void EFIAPI unset_bitmap_bit(uint8_t *bitmap, uint64_t bit_number);
+static uint8_t EFIAPI get_bitmap_bit(uint8_t *bitmap, uint64_t bit_number);
+page_table EFIAPI *walk_and_crate_next_table(uint8_t *bitmap, EFI_SYSTEM_TABLE *sys_table, boot_info *BootInfo, page_table *table, uint16_t index);
+void EFIAPI map_vaddr_to_paddr(uint8_t *bitmap, EFI_SYSTEM_TABLE *sys_table, boot_info *BootInfo, page_table *PML4, uint64_t vaddr, uint64_t paddr, uint64_t flags);
 
 extern void __attribute__((sysv_abi)) jump_to_kernel(uint64_t pml4_phys, uint64_t entry_point, uint64_t stack_top, void *BootInfo);
 
@@ -22,10 +27,115 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     EFI_STATUS status = 0;
 
-    //Allocate a page for outr boot struct which we will be filling up.
+    //We need to start by getting the UEFI memory map. Used for getting the max valid address for conventional memory.
+    UINTN map_size;
+    UINTN descriptor_size;
+    EFI_MEMORY_DESCRIPTOR *map = get_memory_map(&map_size, &descriptor_size, NULL, SystemTable);
+
+    //We then get the max memory address of proper EFI_MEMORY_TYPE.
+    uint64_t max_memory_address = 0;
+    uint64_t physical_memory_frame_count = 0;
+    uint64_t physical_memory_used_frame_count = 0;
+    uint8_t *map_ptr = (uint8_t*)map;
+    for (uint64_t i = 0; i < map_size; i += descriptor_size) {
+        EFI_MEMORY_DESCRIPTOR *map = (EFI_MEMORY_DESCRIPTOR*)(map_ptr + i);
+        if (map->Type != EfiConventionalMemory &&
+        map->Type != EfiLoaderCode &&
+        map->Type != EfiLoaderData &&
+        map->Type != EfiBootServicesCode &&
+        map->Type != EfiBootServicesData &&
+        map->Type != EfiACPIReclaimMemory &&
+        map->Type != EfiACPIMemoryNVS &&
+        map->Type != EfiRuntimeServicesCode &&
+        map->Type != EfiRuntimeServicesData
+        ) continue;
+
+        //If we are here, then it is part of the total system ram.
+        physical_memory_frame_count += map->NumberOfPages;
+
+        if (map->Type != EfiConventionalMemory &&
+        map->Type != EfiLoaderCode &&
+        map->Type != EfiLoaderData &&
+        map->Type != EfiBootServicesCode &&
+        map->Type != EfiBootServicesData
+        ) {
+            //This is the used memory.
+            physical_memory_used_frame_count += map->NumberOfPages;
+            continue;
+        }
+        //Here is the actual legal memory for us to use.
+        max_memory_address = (map->PhysicalStart + 4096 * map->NumberOfPages > max_memory_address) ? map->PhysicalStart + 4096 * map->NumberOfPages : max_memory_address;
+    }
+
+    //Now, with the max address, we can simply request UEFI for the pages to store it. We will ask for sequential memory for easy reading like an array.
+    //Calculate the size of our bitmap and allocate it for later use.
+    uint64_t bitmap_size_bytes = (((max_memory_address + 4095) / 4096) + 7) / 8;
+    uint64_t bitmap_frame_count = ((max_memory_address + 4095) / 4096) >> 12;
+    EFI_PHYSICAL_ADDRESS bitmap_paddr;
+    uint8_t *bitmap;
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, (bitmap_size_bytes + 4095) / 4096, &bitmap_paddr);
+    check_EFI_error(status, L"Cannot allocate pages for memory bitmap!", SystemTable);
+    //Initialized to 1 -> mark as busy unless told otherwise. Handles potential holes and MMIO, etc.
+    bitmap = (uint8_t*)bitmap_paddr;
+    SystemTable->BootServices->SetMem((void*)bitmap, bitmap_size_bytes, 255);
+    
+    //Now, we will loop the map, which we will request again from uefi. We will unset bits which can be declared as free. We will unset UEFI loader stuff, since the bitmap will be used ONLY for the kernel, which wont care about it.
+    map = get_memory_map(&map_size, &descriptor_size, NULL, SystemTable);
+    map_ptr = (uint8_t*)map;
+    for (uint64_t i = 0; i < map_size; i += descriptor_size) {
+        EFI_MEMORY_DESCRIPTOR *mmap = (EFI_MEMORY_DESCRIPTOR*)(map_ptr + i);
+        if (mmap->Type != EfiConventionalMemory &&
+        mmap->Type != EfiLoaderCode &&
+        mmap->Type != EfiLoaderData &&
+        mmap->Type != EfiBootServicesCode &&
+        mmap->Type != EfiBootServicesData
+        ) continue;
+
+        uint64_t bit_to_change = ((mmap->PhysicalStart + 4095) & ~4095ULL) >> 12;
+        uint64_t higher_bit = (mmap->PhysicalStart + (mmap->NumberOfPages * 0x1000)) >> 12;
+
+        while (bit_to_change < higher_bit) unset_bitmap_bit(bitmap, bit_to_change++);
+    }
+
+    //Allocate a page for boot struct which we will be filling up.
     boot_info *BootInfo;
     status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS *)&BootInfo);
     check_EFI_error(status, L"Could not allocate a page for the boot struct!", SystemTable);
+
+    //Start filling the BI struct with some data.
+    BootInfo->memory_bitmap_address = (uint64_t)(bitmap_paddr);
+    BootInfo->memory_bitmap_size = bitmap_size_bytes;
+    BootInfo->memory_bitmap_frame_count = bitmap_frame_count;
+    BootInfo->memory_physical_total_frames = physical_memory_frame_count;
+    BootInfo->memory_physical_used_frames = physical_memory_used_frame_count;
+
+    //Now, we can note down any kernel permenent things for the PMM to track. This includes the very bitmap! So we will note it down.
+    uint64_t bit_to_change = (uint64_t)(bitmap_paddr) >> 12;
+    for (uint64_t i = 0; i < (bitmap_size_bytes + 4095) / 4096; i++) {
+        set_bitmap_bit(bitmap, bit_to_change++);
+        BootInfo->memory_physical_used_frames++;
+    } 
+
+    //And also set the first frame to 0 as a sentinel value, and handle like "NULL"/invalid returns from PMM.
+    if (!get_bitmap_bit(bitmap, 0)) {
+        set_bitmap_bit(bitmap, 0);
+        BootInfo->memory_physical_used_frames++;
+    }
+    
+    //The kernel cares about the struct, so save it to the bitmap.
+    set_bitmap_bit(bitmap, (uint64_t)(BootInfo) >> 12);
+    BootInfo->memory_physical_used_frames++;
+
+    //Prep our PML4 table.
+    page_table *PML4;
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PML4);
+    check_EFI_error(status, L"Cannot allocate page for PML4 table!", SystemTable);
+    SystemTable->BootServices->SetMem((void*)PML4, 4096, 0);
+    BootInfo->PML4 = (uint64_t)PML4;
+
+    //We also save this table to bitmap.
+    set_bitmap_bit(bitmap, (uint64_t)(PML4) >> 12);
+    BootInfo->memory_physical_used_frames++;
 
     //Get the linear pixel buffer address.
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
@@ -107,68 +217,53 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     //Start pulling the program headers, we only care about the PT_LOAD for now. 
     Elf64_Phdr *ELF_program_header = (Elf64_Phdr *)((uint8_t *)kernel_elf_ptr + ELF_file_header->e_phoff);
-    uint64_t physical_base = 0x2000000;
-    uint64_t virtual_base;
     uint64_t kernel_entry_point = ELF_file_header->e_entry;
-    uint8_t found_base = 0;
-    for (int i = 0; i < ELF_file_header->e_phnum; i++) {
-        //1 is the PT_LOAD type.
-        if (ELF_program_header[i].p_type != 1) continue;
-        if (!found_base) {
-            virtual_base = ELF_program_header[i].p_vaddr;
-            found_base = 1;
+
+    //We will loop through all sections in the ELF file.
+    for (uint16_t phindex = 0; phindex < ELF_file_header->e_phnum; phindex++) {
+        if (ELF_program_header[phindex].p_type != 1) { // 1 == PT_LOAD
+            continue;
         }
+        uint64_t current_file_segment_consumption = 0;
+        //This loop will handle creating each frame required for the section, and mapping it to virtual.
+        for (uint64_t segment_vaddr = ELF_program_header[phindex].p_vaddr; segment_vaddr < ELF_program_header[phindex].p_vaddr + ELF_program_header[phindex].p_memsz; segment_vaddr += 0x1000) {
+            //We then need to get a frame.
+            uint8_t *kernel_section_frame_ptr;
+            status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)(&kernel_section_frame_ptr));
+            check_EFI_error(status, L"Unable to allocate page for kernel!", SystemTable);
 
-        //Get the source address.
-        void *source_address = (uint8_t *)ELF_file_header + ELF_program_header[i].p_offset;
+            //This will copy AT MOST one page, or less if needed.
+            uint64_t size_to_copy = (ELF_program_header[phindex].p_filesz - current_file_segment_consumption >= 4096) ? 4096 : ELF_program_header[phindex].p_filesz - current_file_segment_consumption;
 
-        //Allocate pages
-        EFI_PHYSICAL_ADDRESS physical_offset = physical_base + (ELF_program_header[i].p_vaddr - virtual_base);
-        status = SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, (ELF_program_header[i].p_memsz + 0x1FFFFF) / 0x200000, &physical_offset);
-        check_EFI_error(status, L"Unable to allocate memory (huge page) for kernel section!", SystemTable);
+            //We then need to copy the data, at the size requested.
+            SystemTable->BootServices->CopyMem((void*)kernel_section_frame_ptr, (void*)((uint64_t)ELF_file_header + ELF_program_header[phindex].p_offset + current_file_segment_consumption), size_to_copy);
+            //If not an entire frame was copied, then fill the rest with 0s.
+            if (size_to_copy < 4096) {
+                SystemTable->BootServices->SetMem((void*)(kernel_section_frame_ptr + size_to_copy), 4096 - size_to_copy, 0);
+            }
+            //Then update this so we copy the next frame/data.
+            current_file_segment_consumption += size_to_copy;
 
-        //Copy the "real data"
-        if (ELF_program_header[i].p_filesz > 0) {
-            SystemTable->BootServices->CopyMem((void *)physical_offset, source_address, ELF_program_header[i].p_filesz);
-        }
+            //Now, we map the frame.
+            //We get the flags from the data.
+            uint8_t write_flag = (ELF_program_header[phindex].p_flags >> 1) & 1;
+            uint8_t nx_flag = !(ELF_program_header[phindex].p_flags & 1) << 6;
+            map_vaddr_to_paddr(bitmap, SystemTable, BootInfo, PML4, segment_vaddr, (uint64_t)kernel_section_frame_ptr, PT_GLOBAL | write_flag | nx_flag);
 
-        //Zero the rest if memory size is larger thatn the data we had in the file
-        if (ELF_program_header[i].p_memsz > ELF_program_header[i].p_filesz) {
-            UINTN bss_size = ELF_program_header[i].p_memsz - ELF_program_header[i].p_filesz;
-            SystemTable->BootServices->SetMem((void *)(physical_offset + ELF_program_header[i].p_filesz), bss_size, 0);
+            //The kernel needs to remember where it is in physical mem, so save it to the bitmap.
+            set_bitmap_bit(bitmap, (uint64_t)(kernel_section_frame_ptr) >> 12);
+            BootInfo->memory_physical_used_frames++;
         }
     }
     SystemTable->conout->OutputString(SystemTable->conout, L"Finished parsing and loading elf!\r\n");
 
-    BootInfo->kernel_size = (uint64_t)ELF_file_header->e_phnum;
-    BootInfo->kernel_location_physical = (uint64_t)physical_base;
-    BootInfo->kernel_location_virtual = (uint64_t)virtual_base;
+    //We need to get the memory map again for the up-to-date version.
+    map = get_memory_map(&map_size, &descriptor_size, NULL, SystemTable);
 
-    //Prep our page tables. We will direct map all of memory.
-    //Start with our PML4 table.
-    page_table *PML4;
-    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PML4);
-    check_EFI_error(status, L"Cannot allocate page for PML4 table!", SystemTable);
-    SystemTable->BootServices->SetMem((void*)PML4, 4096, 0);
-    BootInfo->PML4 = (uint64_t)PML4;
-
-    //We need to get the memory map for the maximum ram address.
-    UINTN map_size;
-    UINTN descriptor_size;
-    EFI_MEMORY_DESCRIPTOR *map = get_memory_map(&map_size, &descriptor_size, NULL, SystemTable);
-
-    //Get a page to keep track of our page table addresses, for the PMM later on.
-    uint64_t *page_table_addresses;
-    uint32_t page_table_addresses_next_index = 0;
-    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&page_table_addresses);
-    check_EFI_error(status, L"Cannot allocate page for page table addresses array!", SystemTable);
-
-    //Now, lets map the memory!
-    uint8_t *map_ptr = (uint8_t*)map;
-    //While we do this, we will get the max memory address from the map, and allocate the bitmap to simplify life for our pmm.
-    uint64_t max_memory_address = 0;
+    //Now, lets map the memory (deirect map)!
+    map_ptr = (uint8_t*)map;
     for (uint64_t i = 0; i < map_size; i += descriptor_size) {
-        EFI_MEMORY_DESCRIPTOR *map = (EFI_MEMORY_DESCRIPTOR*)(map_ptr + i);
+        map = (EFI_MEMORY_DESCRIPTOR*)(map_ptr + i);
         if (map->Type != EfiConventionalMemory &&
         map->Type != EfiLoaderCode &&
         map->Type != EfiLoaderData &&
@@ -177,249 +272,48 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
         map->Type != EfiACPIReclaimMemory
         ) continue;
 
-        uint64_t low_bound_phys = map->PhysicalStart & ~0x1FFFFFULL;
-        uint64_t high_bound_phys = ((map->PhysicalStart + 4096 * map->NumberOfPages - 1) + 0x1FFFFFULL) & ~0x1FFFFFULL;
+        uint64_t low_bound_phys = (map->PhysicalStart + 4095) & ~0xFFFULL;
+        uint64_t high_bound_phys = map->PhysicalStart + (map->NumberOfPages * 0x1000) & ~0xFFFULL;
 
-        for (uint64_t current_address = low_bound_phys; current_address <= high_bound_phys; current_address += 0x200000) {
+        for (uint64_t current_address = low_bound_phys; current_address < high_bound_phys; current_address += 0x1000) {
             uint64_t current_address_virtual = current_address + DIRECT_MAP_BASE;
-            uint16_t PML4_index = (current_address_virtual >> 39) & 0x1FF; //Should start at index 273
-            uint16_t PDPT_index = (current_address_virtual >> 30) & 0x1FF; //0
-            uint16_t PD_index = (current_address_virtual >> 21) & 0x1FF; //0
 
-            page_table *PDPT;
-            page_table *PD;
-
-            if (!(PML4->entries[PML4_index].bits.present)) {
-                status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PDPT);
-                check_EFI_error(status, L"Cannot allocate page for next PDPT!", SystemTable);
-                SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
-                page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
-                PML4->entries[PML4_index].bits.present = 1;
-                PML4->entries[PML4_index].bits.writeable = 1;
-                PML4->entries[PML4_index].bits.execute_disable = 1;
-                PML4->entries[PML4_index].bits.physical_address = (uint64_t)PDPT >> 12;
-            }
-            else {
-                PDPT = (page_table*)(PML4->entries[PML4_index].bits.physical_address << 12);
-            }
-            
-            if (!(PDPT->entries[PDPT_index].bits.present)) {
-                status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PD);
-                check_EFI_error(status, L"Cannot allocate page for next PD!", SystemTable);
-                SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
-                page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
-                PDPT->entries[PDPT_index].bits.present = 1;
-                PDPT->entries[PDPT_index].bits.writeable = 1;
-                PDPT->entries[PDPT_index].bits.physical_address = (uint64_t)PD >> 12;
-            }
-            else {
-                PD = (page_table*)(PDPT->entries[PDPT_index].bits.physical_address << 12);
-            }
-
-            PD->entries[PD_index].bits.present = 1;
-            PD->entries[PD_index].bits.writeable = 1;
-            PD->entries[PD_index].bits.huge_page = 1;
-            PD->entries[PD_index].bits.global = 1;
-            PD->entries[PD_index].bits.physical_address = (current_address >> 12) & ~0x1FFULL;
+            map_vaddr_to_paddr(bitmap, SystemTable, BootInfo, PML4, current_address_virtual, current_address, PT_GLOBAL | PT_WRITEABLE);
         }
-
-        //Calculate the max address.
-        max_memory_address = (map->PhysicalStart + 4096 * map->NumberOfPages > max_memory_address) ? map->PhysicalStart + 4096 * map->NumberOfPages : max_memory_address;
-    } 
-
-    //Calculate the size of our bitmap and allocate it for later use.
-    uint64_t bitmap_size = (((max_memory_address + 4095) / 4096) + 7) / 8;
-    EFI_PHYSICAL_ADDRESS bitmap;
-
-    SystemTable->conout->OutputString(SystemTable->conout, L"Max Memory Address: ");
-    SystemTable->conout->OutputString(SystemTable->conout, to_string_hex(max_memory_address));
-    SystemTable->conout->OutputString(SystemTable->conout, L"\r\n");
-    SystemTable->conout->OutputString(SystemTable->conout, L"bitmap size: ");
-    SystemTable->conout->OutputString(SystemTable->conout, to_string_hex(bitmap_size));
-    SystemTable->conout->OutputString(SystemTable->conout, L"\r\n");
-
-    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, (bitmap_size + 4095) / 4096, &bitmap);
-    check_EFI_error(status, L"Cannot allocate pages for memory bitmap!", SystemTable);
-    //Initialized to 1 -> mark as busy unless told otherwise. Handles potential holes and MMIO, etc.
-    SystemTable->BootServices->SetMem((void*)bitmap, bitmap_size, 255);
-
-    BootInfo->maximum_address_physical = max_memory_address;
-    BootInfo->memory_bitmap_address = (uint64_t)bitmap;
-    BootInfo->memory_bitmap_size = bitmap_size;
-
+    }
     SystemTable->conout->OutputString(SystemTable->conout, L"Finished direct mapping of memory!\r\n");
 
-    //Map the actual kernel as well!
-    uint16_t PML4_index = (KERNEL_VIRTUAL_BASE >> 39) & 0x1FF; //Should start at index 511
-    uint16_t PDPT_index = (KERNEL_VIRTUAL_BASE >> 30) & 0x1FF; //510 (Before last GB)
-    uint16_t PD_index = (KERNEL_VIRTUAL_BASE >> 21) & 0x1FF; //0
-
-    //Make the required page tables
-    page_table *PDPT;
-    page_table *PD;
-    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PDPT);
-    check_EFI_error(status, L"Cannot allocate page for kernel's PDPT!", SystemTable);
-    SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
-    page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
-
-    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PD);
-    check_EFI_error(status, L"Cannot allocate page for kernel's PD!", SystemTable);
-    SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
-    page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
-
-    //Create the mapping in the higher tables
-    PML4->entries[PML4_index].bits.present = 1;
-    PML4->entries[PML4_index].bits.writeable = 1;
-    PML4->entries[PML4_index].bits.physical_address = (uint64_t)PDPT >> 12;
-
-    PDPT->entries[PDPT_index].bits.present = 1;
-    PDPT->entries[PDPT_index].bits.writeable = 1;
-    PDPT->entries[PDPT_index].bits.physical_address = (uint64_t)PD >> 12;
-
-    //Map the first section
-    PD->entries[PD_index].bits.present = 1;
-    PD->entries[PD_index].bits.huge_page = 1;
-    PD->entries[PD_index].bits.global = 1;
-    PD->entries[PD_index].bits.physical_address = (physical_base >> 12) & ~0x1FFULL;
-
-    //Map seccond section
-    PD_index++;
-    PD->entries[PD_index].bits.present = 1;
-    PD->entries[PD_index].bits.writeable = 1;
-    PD->entries[PD_index].bits.huge_page = 1;
-    PD->entries[PD_index].bits.global = 1;
-    PD->entries[PD_index].bits.execute_disable = 1;
-    PD->entries[PD_index].bits.physical_address = ((physical_base + 0x200000) >> 12) & ~0x1FFULL;
-
-    //Map the stack page
-    PML4_index = ((KERNEL_STACK_BASE - 1) >> 39) & 0x1FF; //Should be at index 511
-    PDPT_index = ((KERNEL_STACK_BASE - 1) >> 30) & 0x1FF; //509
-    PD_index = ((KERNEL_STACK_BASE - 1) >> 21) & 0x1FF; //511
-
-    //Check to see if these were already mapped (Could have been from kernel depends on address)
-    if (!PML4->entries[PML4_index].bits.present) {
-        status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PDPT);
-        check_EFI_error(status, L"Cannot allocate page for kernel stack's PDPT!", SystemTable);
-        SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
-        page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
-        PML4->entries[PML4_index].bits.present = 1;
-        PML4->entries[PML4_index].bits.writeable = 1;
-        PML4->entries[PML4_index].bits.physical_address = (uint64_t)PDPT >> 12;
-    }
-    else PDPT = (page_table*)(PML4->entries[PML4_index].bits.physical_address << 12);
-
-    if (!PDPT->entries[PDPT_index].bits.present) {
-        status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PD);
-        check_EFI_error(status, L"Cannot allocate page for kernel stack's PD!", SystemTable);
-        SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
-        page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
-        PDPT->entries[PDPT_index].bits.present = 1;
-        PDPT->entries[PDPT_index].bits.writeable = 1;
-        PDPT->entries[PDPT_index].bits.physical_address = (uint64_t)PD >> 12;
-    }
-    else PD = (page_table*)(PDPT->entries[PDPT_index].bits.physical_address << 12);
-
-    //Allocate a page for the stack (huge, 2MB alligned)
-    EFI_PHYSICAL_ADDRESS kernel_stack_physical_base = BootInfo->kernel_location_physical + (BootInfo->kernel_size * 512 * 4096);
-    status = SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, 512, &kernel_stack_physical_base);
-    check_EFI_error(status, L"Cannot allocate page for kernel's stack!", SystemTable);
-    SystemTable->BootServices->SetMem((void*)kernel_stack_physical_base, 512 * 4096, 0);
-    BootInfo->kernel_stack_location_physical = (uint64_t)kernel_stack_physical_base;
-
-    PD->entries[PD_index].bits.present = 1;
-    PD->entries[PD_index].bits.writeable = 1;
-    PD->entries[PD_index].bits.huge_page = 1;
-    PD->entries[PD_index].bits.global = 1;
-    PD->entries[PD_index].bits.execute_disable = 1;
-    PD->entries[PD_index].bits.physical_address = (kernel_stack_physical_base >> 12) & ~0x1FFULL;
-
-    //Map the nasm bridge, needs to be identity mapped
-    //Get the address of our function.
-    uint64_t bridge_address = (uint64_t)jump_to_kernel;
-    uint64_t assumed_bridge_end_address = bridge_address + 512;
-
-    PML4_index = (bridge_address >> 39) & 0x1FF;
-    PDPT_index = (bridge_address >> 30) & 0x1FF;
-    PD_index = (bridge_address >> 21) & 0x1FF;
-
-    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PDPT);
-    check_EFI_error(status, L"Cannot allocate page for assembly bridge's PDPT!", SystemTable);
-    SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
-    page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
-
-    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PD);
-    check_EFI_error(status, L"Cannot allocate page for assembly bridge's PD!", SystemTable);
-    SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
-    page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
-
-    uint8_t bridge_page_count = 1;
-
-    PML4->entries[PML4_index].bits.present = 1;
-    PML4->entries[PML4_index].bits.writeable = 1;
-    PML4->entries[PML4_index].bits.physical_address = (uint64_t)PDPT >> 12;
-
-    PDPT->entries[PDPT_index].bits.present = 1;
-    PDPT->entries[PDPT_index].bits.writeable = 1;
-    PDPT->entries[PDPT_index].bits.physical_address = (uint64_t)PD >> 12;
-
-    PD->entries[PD_index].bits.present = 1;
-    PD->entries[PD_index].bits.writeable = 1;
-    PD->entries[PD_index].bits.huge_page = 1;
-    PD->entries[PD_index].bits.global = 1;
-    PD->entries[PD_index].bits.physical_address = (bridge_address >> 12) & ~0x1FFULL;
-
-    if ((bridge_address >> 21) != (assumed_bridge_end_address >> 21)) {
-        PML4_index = (assumed_bridge_end_address >> 39) & 0x1FF;
-        PDPT_index = (assumed_bridge_end_address >> 30) & 0x1FF;
-        PD_index = (assumed_bridge_end_address >> 21) & 0x1FF;
-
-        if (!PML4->entries[PML4_index].bits.present) {
-            status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PDPT);
-            check_EFI_error(status, L"Cannot allocate page for kernel stack's PDPT!", SystemTable);
-            SystemTable->BootServices->SetMem((void*)PDPT, 4096, 0);
-            page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PDPT;
-            PML4->entries[PML4_index].bits.present = 1;
-            PML4->entries[PML4_index].bits.writeable = 1;
-            PML4->entries[PML4_index].bits.physical_address = (uint64_t)PDPT >> 12;
-        }
-        else PDPT = (page_table*)(PML4->entries[PML4_index].bits.physical_address << 12);
-
-        if (!PDPT->entries[PDPT_index].bits.present) {
-            status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&PD);
-            check_EFI_error(status, L"Cannot allocate page for kernel stack's PD!", SystemTable);
-            SystemTable->BootServices->SetMem((void*)PD, 4096, 0);
-            page_table_addresses[page_table_addresses_next_index++] = (uint64_t)PD;
-            PDPT->entries[PDPT_index].bits.present = 1;
-            PDPT->entries[PDPT_index].bits.writeable = 1;
-            PDPT->entries[PDPT_index].bits.physical_address = (uint64_t)PD >> 12;
-        }
-        else PD = (page_table*)(PDPT->entries[PDPT_index].bits.physical_address << 12);
-
-        PD->entries[PD_index].bits.present = 1;
-        PD->entries[PD_index].bits.writeable = 1;
-        PD->entries[PD_index].bits.huge_page = 1;
-        PD->entries[PD_index].bits.global = 1;
-        PD->entries[PD_index].bits.physical_address = (assumed_bridge_end_address >> 12) & ~0x1FFULL;
-
-        bridge_page_count++;
+    //Allocate n pages for the kernel and then map them to the designated kernel stack area
+    uint64_t next_kernel_stack_vaddr = KERNEL_STACK_BASE;
+    for (int i = 0; i < KERNEL_STACK_PAGE_COUNT; i++) {
+        EFI_PHYSICAL_ADDRESS kernel_stack_paddr;
+        status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &kernel_stack_paddr);
+        check_EFI_error(status, L"Cannot allocate page for kernel's stack!", SystemTable);
+        //The -1 here is due to how the stack works in x86_64. It grows down and never touches its base, so -1 will make the address fall into the page under which wil actually be used.
+        map_vaddr_to_paddr(bitmap, SystemTable, BootInfo, PML4, next_kernel_stack_vaddr - 1, kernel_stack_paddr, PT_GLOBAL | PT_WRITEABLE);
     }
 
-    BootInfo->bridge_size = bridge_page_count;
-    BootInfo->bridge_location = bridge_address;
+    //TODO: Work on the bridge identity mapping here.
+    //They represent the beggining and end of the GDT. Remember to use & to get the address, as the labels themselves hold no useful data for us.
+    extern uint8_t gdt64;
+    extern uint8_t gdt64_ptr; 
+
+    //From these, we get the lower/higher bounds of pages to identity map.
+    uint64_t lower_address_bound = (uint64_t)(&gdt64) & ~0xFFFULL;
+    uint64_t higher_address_bound = ((uint64_t)(&gdt64_ptr) + 0x1000) & ~0xFFFULL;
+
+    //Then, we map the pages. This loop should map 1-2 pages depending on if it crosses a page boundary.
+    for (uint64_t current_address = lower_address_bound; current_address < higher_address_bound; current_address += 0x1000) {
+        map_vaddr_to_paddr(bitmap, SystemTable, BootInfo, PML4, current_address, current_address, PT_GLOBAL | PT_WRITEABLE);
+    }
 
     SystemTable->conout->OutputString(SystemTable->conout, L"Finished kernel mapping of memory!\r\n");
-
-    BootInfo->page_table_addresses = page_table_addresses;
-    BootInfo->page_table_addresses_count = page_table_addresses_next_index;
+    SystemTable->conout->OutputString(SystemTable->conout, L"Preparing to jump to kernel...\r\n");
 
     //After this DO NOT use UEFI functions to avoid modifying memory map.
     //Prepare the memory map get.
     UINTN map_key;
-
     map = get_memory_map(&map_size, &descriptor_size, &map_key, SystemTable);
-    BootInfo->mmap = (uint64_t)map;
-    BootInfo->mmap_size = (uint64_t)map_size;
-    BootInfo->descriptor_size = (uint64_t)descriptor_size;
 
     //We finally leave the UEFI space!
     status = SystemTable->BootServices->ExitBootServices(ImageHandle, map_key);
@@ -515,7 +409,7 @@ uint16_t *EFIAPI to_string_hex(uint64_t input){
     return buffer;
 }
 
-void check_EFI_error(EFI_STATUS status, uint16_t *error_message, EFI_SYSTEM_TABLE *SystemTable) {
+void EFIAPI check_EFI_error(EFI_STATUS status, uint16_t *error_message, EFI_SYSTEM_TABLE *SystemTable) {
     if (status != 0) {
         SystemTable->conout->OutputString(SystemTable->conout, error_message);
         SystemTable->conout->OutputString(SystemTable->conout, L" Error Hex: ");
@@ -550,4 +444,80 @@ EFI_MEMORY_DESCRIPTOR *EFIAPI get_memory_map(UINTN *map_size, UINTN *descriptor_
     }
 
     return map;
+}
+
+static void EFIAPI set_bitmap_bit(uint8_t *bitmap,uint64_t bit_number) {
+    bitmap[bit_number / 8] = bitmap[bit_number / 8] | (1 << (bit_number % 8));
+}
+
+static void EFIAPI unset_bitmap_bit(uint8_t *bitmap, uint64_t bit_number) {
+    bitmap[bit_number / 8] = bitmap[bit_number / 8] & ((254 << (bit_number % 8)) | ((1 << (bit_number % 8)) - 1));
+}
+
+static uint8_t EFIAPI get_bitmap_bit(uint8_t *bitmap, uint64_t bit_number) {
+    return (bitmap[bit_number / 8] >> (bit_number % 8) & 0x1);
+}
+
+page_table EFIAPI *walk_and_crate_next_table(uint8_t *bitmap, EFI_SYSTEM_TABLE *sys_table, boot_info *BootInfo, page_table *table, uint16_t index) {
+    page_table *next_table = NULL;
+    EFI_STATUS status;
+    if (!table->entries[index].bits.present) {
+        //Allocate a page table
+        EFI_PHYSICAL_ADDRESS next_table_p;
+        status = sys_table->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &next_table_p);
+        check_EFI_error(status, L"Unable to allocate page for a page table!", sys_table);
+        next_table = (page_table*)(next_table_p);
+        sys_table->BootServices->SetMem((void*)next_table, 4096, 0);
+
+        //And prep it.
+        table->entries[index].bits.present = 1;
+        table->entries[index].bits.writeable = 1;
+        table->entries[index].bits.user_available = 1;
+        table->entries[index].bits.physical_address = next_table_p >> 12;
+
+        //And, save it to the bitmap.
+        set_bitmap_bit(bitmap, next_table_p >> 12);
+        BootInfo->memory_physical_used_frames++;
+    }
+    else next_table = (page_table*)((table->entries[index].bits.physical_address << 12));
+
+    return next_table;
+}
+
+void EFIAPI map_vaddr_to_paddr(uint8_t *bitmap, EFI_SYSTEM_TABLE *sys_table, boot_info *BootInfo, page_table *PML4, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
+    uint16_t PML4_index = (vaddr >> 39) & 0x1FF;
+    uint16_t PDPT_index = (vaddr >> 30) & 0x1FF;
+    uint16_t PD_index = (vaddr >> 21) & 0x1FF;
+
+    page_table *PDPT = walk_and_crate_next_table(bitmap, sys_table, BootInfo, PML4, PML4_index);
+    page_table *PD = walk_and_crate_next_table(bitmap, sys_table, BootInfo, PDPT, PDPT_index);
+    
+    //Here, we need to check if this will be a huge page or not.
+    if (flags & 0x10) {
+        //We assume the VMA or other caller will have the addresses alligned to the 2MB mark.
+        PD->entries[PD_index].bits.present = 1;
+        PD->entries[PD_index].bits.writeable = (flags & 0x1);
+        PD->entries[PD_index].bits.user_available = (flags & 0x2) >> 1;
+        PD->entries[PD_index].bits.write_through = (flags & 0x4) >> 2;
+        PD->entries[PD_index].bits.disable_caching = (flags & 0x8) >> 3;
+        PD->entries[PD_index].bits.huge_page = 1;
+        PD->entries[PD_index].bits.global = (flags & 0x20) >> 5;
+        PD->entries[PD_index].bits.execute_disable = (flags & 0x40) >> 6;
+
+        PD->entries[PD_index].bits.physical_address = (paddr >> 12) & ~0x1FFULL;
+    }
+        
+    page_table *PT = walk_and_crate_next_table(bitmap, sys_table, BootInfo, PD, PD_index);
+
+    uint64_t PT_index = (vaddr >> 12) & 0x1FF;
+
+    PT->entries[PT_index].bits.present = 1;
+    PT->entries[PT_index].bits.writeable = (flags & 0x1);
+    PT->entries[PT_index].bits.user_available = (flags & 0x2) >> 1;
+    PT->entries[PT_index].bits.write_through = (flags & 0x4) >> 2;
+    PT->entries[PT_index].bits.disable_caching = (flags & 0x8) >> 3;
+    PT->entries[PT_index].bits.global = (flags & 0x20) >> 5;
+    PT->entries[PT_index].bits.execute_disable = (flags & 0x40) >> 6;
+
+    PT->entries[PT_index].bits.physical_address = (paddr >> 12);
 }

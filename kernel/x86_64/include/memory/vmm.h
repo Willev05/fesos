@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include "../kernel/isr.h"
 
+#define KERNEL_STACK_PAGE_COUNT 8
+
 #define DIRECT_MAP_BASE 0xFFFF888000000000
 #define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000
 
