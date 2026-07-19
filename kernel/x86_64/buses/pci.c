@@ -3,22 +3,25 @@
 #include "../include/buses/pci.h"
 #include "../include/drivers/io.h"
 
+typedef uint32_t (*pci_read_func_t)(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint8_t size);
+typedef void (*pci_write_func_t)(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint32_t value, uint8_t size);
+
+typedef struct {
+    pci_read_func_t read;
+    pci_write_func_t write;
+} pci_api_t;
+
+static pci_api_t pci_api;
+
+static uint32_t legacy_pci_read(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint8_t size);
+static void legacy_pci_write(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint32_t value, uint8_t size);
+
 /**
- * @brief Reads from the PCI configuration space a register (32-bit) from a requested address/offset.
- * 
- * @param bus
- * @param device
- * @param function
- * @param offset Should be 4-byte (32-bit) alligned i.e. 0x0, 0x4, 0x8, etc.
- * 
- * @return A uint32_t representing the congig from the requested register at the specified address/offset.
+ * @brief Initializes the PCI API struct to let drivers read/write to config space.
  */
-uint32_t pci_read_config_long(uint8_t bus, uint8_t device, uint8_t function, uint8_t offset) {
-    //This is the address structure for a PCI address. The highest bit is enalbe bit. The rest is self-explanatory. Look at PCI OSDEV for specific info.
-    uint32_t address = 0x80000000 | ((uint32_t)bus << 16) | ((uint32_t)(device & 0x1F) << 11) | ((uint32_t)(function & 0x7) <<  8) | (offset & 0xFC);
-    outl(PCI_CONFIG_ADDRESS_PORT_NUMBER, address);
-    //Then, after setting the address, we read the data from the data port.
-    return inl(PCI_CONFIG_DATA_PORT_NUMBER);
+void pci_init() {
+    pci_api.read = legacy_pci_read;
+    pci_api.write = legacy_pci_write;
 }
 
 /**
@@ -35,7 +38,7 @@ void pci_get_header(uint8_t bus, uint8_t device, uint8_t function, pci_header_t 
 
     //Then loop through the first 4 registers which have the data needed for the header.
     for (int i = 0; i < 4; i++) {
-        header_ptr[i] = pci_read_config_long(bus, device, function, i * 0x4);
+        header_ptr[i] = pci_api.read(bus, device, function, i * 0x4, 4);
     }
 }
 
@@ -72,7 +75,7 @@ int pci_find_device(uint8_t class_code, uint8_t subclass, pci_device_t *pci_devi
 
                     //We need to loop through the following 5 registers for the bars.
                     for (int i = 0; i < 6; i++) {
-                        pci_device->bars[i] = pci_read_config_long(bus, device, function, 0x10 + i * 0x4);
+                        pci_device->bars[i] = pci_api.read(bus, device, function, 0x10 + i * 0x4, 4);
                     }
                     return 1;
 
@@ -86,4 +89,51 @@ int pci_find_device(uint8_t class_code, uint8_t subclass, pci_device_t *pci_devi
         }
     }
     return 0;
+}
+
+/**
+ * @brief Abstracted signature for reading from PCI configuration space.
+ * @param pci_device A pointer to the pci device for which to read the configuration space.
+ * @param offset Register offset (Up to 4095 for PCIe ECAM).
+ * @param size Read width in bytes (1, 2, or 4).
+ * @return A value representing the requested read from config space. Can be properly casted down to smaller types if size was < 4.
+ */
+uint32_t pci_read_config(pci_device_t *pci_device, uint16_t offset, uint8_t size) {
+    return pci_api.read(pci_device->bus, pci_device->device, pci_device->function, offset, size);
+}
+
+/**
+ * @brief Abstracted signature for writing to PCI configuration space.
+ * @param pci_device A pointer to the pci device for which to write the configuration space.
+ * @param offset Register offset (Up to 4095 for PCIe ECAM).
+ * @param value The value to be written. Size is controlled through the size parameter.
+ * @param size Read width in bytes (1, 2, or 4).
+*/
+void pci_write_config(pci_device_t *pci_device, uint16_t offset, uint32_t value, uint8_t size) {
+    pci_api.write(pci_device->bus, pci_device->device, pci_device->function, offset, value, size);
+}
+
+static uint32_t legacy_pci_read(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint8_t size) {
+    //This is the address structure for a PCI address. The highest bit is enable bit. The rest is self-explanatory. Look at PCI OSDEV for specific info.
+    uint32_t address = 0x80000000 | ((uint32_t)bus << 16) | ((uint32_t)(device & 0x1F) << 11) | ((uint32_t)(function & 0x7) <<  8) | (offset & 0xFC);
+    outl(PCI_CONFIG_ADDRESS_PORT_NUMBER, address);
+
+    //Then, after setting the address, we read the data from the data port. We figure the size and internal offset to read from.
+    //The offset math comes from which bits in the offset are allowed to modify the internal offset. 
+    //For example, byte is allowed to be completely granular, since the offset is measured in bytes. The 3 comes from there, since there are 4 bytes in a dword.
+    if (size == 1) return inb(PCI_CONFIG_DATA_PORT_NUMBER + (offset & 0x3));
+    if (size == 2) return inw(PCI_CONFIG_DATA_PORT_NUMBER + (offset & 0x2));
+    return inl(PCI_CONFIG_DATA_PORT_NUMBER);
+}
+
+static void legacy_pci_write(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint32_t value, uint8_t size) {
+    //This is the address structure for a PCI address. The highest bit is enable bit. The rest is self-explanatory. Look at PCI OSDEV for specific info.
+    uint32_t address = 0x80000000 | ((uint32_t)bus << 16) | ((uint32_t)(device & 0x1F) << 11) | ((uint32_t)(function & 0x7) <<  8) | (offset & 0xFC);
+    outl(PCI_CONFIG_ADDRESS_PORT_NUMBER, address);
+
+    //Then, after setting the address, we read the data from the data port. We figure the size and internal offset to read from.
+    //The offset math comes from which bits in the offset are allowed to modify the internal offset. 
+    //For example, byte is allowed to be completely granular, since the offset is measured in bytes. The 3 comes from there, since there are 4 bytes in a dword.
+    if (size == 1) outb(PCI_CONFIG_DATA_PORT_NUMBER + (offset & 0x3), (uint8_t)value);
+    if (size == 2) outw(PCI_CONFIG_DATA_PORT_NUMBER + (offset & 0x2), (uint16_t)value);
 }

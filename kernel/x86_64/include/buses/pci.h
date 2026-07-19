@@ -41,6 +41,8 @@ typedef struct {
     uint32_t bars[6];
 } pci_device_t;
 
-uint32_t pci_read_config_long(uint8_t bus, uint8_t device, uint8_t function, uint8_t offset);
+void pci_init();
 void pci_get_header(uint8_t bus, uint8_t device, uint8_t function, pci_header_t *header);
 int pci_find_device(uint8_t class_code, uint8_t subclass, pci_device_t *device);
+uint32_t pci_read_config(pci_device_t *pci_device, uint16_t offset, uint8_t size);
+void pci_write_config(pci_device_t *pci_device, uint16_t offset, uint32_t value, uint8_t size);

@@ -16,6 +16,18 @@ static inline uint8_t inb(uint16_t port) {
     return ret;
 }
 
+//The out word (16-bit) function for io ports.
+static inline void outw(uint16_t port, uint16_t word) {
+    __asm__ volatile ("outw %0, %1" : : "a"(word), "Nd"(port));
+}
+
+//The in word (16-bit) function for io ports.
+static inline uint16_t inw(uint16_t port) {
+    uint16_t ret;
+    __asm__ volatile ("inw %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
 //The out long (32-bit) function for io ports.
 static inline void outl(uint16_t port, uint32_t long_val) {
     __asm__ volatile ("outl %0, %1" : : "a"(long_val), "Nd"(port));
