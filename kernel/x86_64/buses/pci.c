@@ -136,4 +136,5 @@ static void legacy_pci_write(uint8_t bus, uint8_t device, uint8_t function, uint
     //For example, byte is allowed to be completely granular, since the offset is measured in bytes. The 3 comes from there, since there are 4 bytes in a dword.
     if (size == 1) outb(PCI_CONFIG_DATA_PORT_NUMBER + (offset & 0x3), (uint8_t)value);
     if (size == 2) outw(PCI_CONFIG_DATA_PORT_NUMBER + (offset & 0x2), (uint16_t)value);
+    outl(PCI_CONFIG_DATA_PORT_NUMBER, value);
 }

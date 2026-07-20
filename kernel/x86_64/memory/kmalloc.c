@@ -22,6 +22,11 @@ void kmalloc_init() {
     buckets[6].bucket_size = 1024;
 }
 
+/**
+ * @brief Allocates a block of size n on the kernel heap.
+ * @param size The size in bytes of the allocation.
+ * @return A pointer to the allocated block.
+ */
 void *kmalloc(size_t size) {
     //Cannot allocate of size 0.
     if (!size) return NULL;
@@ -65,6 +70,10 @@ void *kmalloc(size_t size) {
     return (void*)alloc_addr;
 }
 
+/**
+ * @brief Frees the allocated block pointed to by ptr.
+ * @param ptr A pointer to the memory block to be freed.
+ */
 void kfree(void *ptr) {
     //We will start by getting the page descriptor for this returned pointer.
     uint64_t v_addr = (uint64_t)ptr;
@@ -112,6 +121,26 @@ void kfree(void *ptr) {
         vma_free_memory_from_ktree((uint64_t)page_descriptor);
         return;
     }
+}
+
+/**
+ * @brief Maps a physical address into the kernel MMIO tree.
+ * @param physical_address The physical address of the MMIO space to map.
+ * @param size The size in bytes of the MMIO space to map.
+ * @param mmio_flag The flag for the MMIO mapping type. Use default in most cases.
+ * @return A pointer to the mapped MMIO area.
+ */
+void *kmap_mmio(uint64_t physical_address, size_t size, mmio_flags_t mmio_flag) {
+    uint32_t vmm_flags = PT_GLOBAL | PT_WRITEABLE;
+
+    if (mmio_flag == MMIO_DEFAULT) {
+        vmm_flags |= PT_DISABLE_CACHING;
+    }
+
+    //We want to make sure the size is page-alligned, since we need this to work in pages.
+    size = (size + 4095) & ~4095;
+
+    return vma_allocate_memory_from_ktree(size, VMA_HARDWARE_MMIO, vmm_flags, NULL);
 }
 
 //Private static helper functions. 
