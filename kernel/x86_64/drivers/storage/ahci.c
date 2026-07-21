@@ -70,5 +70,39 @@ static void ahci_init_device(pci_device_t *pci_device) {
     pci_write_config(pci_device, 0x6, pci_command_register, 2);
 
     //We then map this to MMIO area. 
-    
+    HBA_MEM *hba = kmap_mmio(bar_address, sizeof(HBA_MEM), MMIO_DEFAULT);
+
+	//Now we request ownership of the AHCI controller from the BIOS, if it is owned by it.
+	if (hba->bohc & 1) {
+		hba->bohc |= (1 << 1);
+
+		while (hba->bohc & 1);
+	}
+
+	hba->ghc |= 1;
+
+	while (hba->ghc & 1);
+
+	//Then, we enable AHCI mode.
+	hba->ghc |= (1 << 31);
+
+	//Now, its time to read the implemented and connected ports.
+	//Outside loop will look for the implemented ports (physically wired) and the inner one will check if they are connected.
+	for (uint8_t i = 0; i < 32; i++) {
+		if (hba->pi & (1 << i)) {
+			HBA_PORT *port = &hba->ports[i];
+
+			//Get the sata status register PxSSTS.
+			uint32_t ssts = port->ssts;
+
+			//We then want to grab the device detection (DET) and interface power management (IPM).
+			uint8_t det = ssts & 0xF;
+			uint8_t ipm = (ssts >> 8) & 0xF;
+
+			//If the device is detected and communicating (det == 0x3) AND the interface is in an active state (ipm == 0x1) then the port is active and connected.
+			if (det == 3 && ipm == 1) {
+				//TODO: Implement the port stuff
+			}
+		}
+	}
 }
