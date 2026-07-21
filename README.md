@@ -29,7 +29,7 @@ The goal of this project is to build a microkernel from first principles.
 ### Prerequisites
 
 To compile and emulate this kernel, you will need a cross-compiler toolchain and QEMU:
-- `mtools` (for creating bootable disk images)
+- `mtools` & `parted` (for creating bootable disk images)
 - `nasm` (for assembly files)
 - `clang` & `lld` cross-compiler and linker
 - `qemu-system-x86_64` & `ovmf` emulator and efi image
