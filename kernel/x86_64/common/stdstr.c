@@ -3,6 +3,13 @@
 
 #include "../include/common/stdstr.h"
 
+/**
+ * @brief Unsigned long to string.
+ * @param number The unsigned long to convert.
+ * @param buffer The provided string buffer to write the number into.
+ * @param size The size of the provided buffer in bytes/chars.
+ * @return STR_SUCCESS if success, STR_ERR_INVALID_ARG if invalid args (string/buffer = null), STR_ERR_BUFFER_TOO_SMALL if provided buffer is too small (will write partial string).
+ */
 int ultoa(uint64_t number, char *buffer, size_t size) {
     //Null buffer check.
     if (buffer == 0) return STR_ERR_INVALID_ARG;
@@ -35,6 +42,13 @@ int ultoa(uint64_t number, char *buffer, size_t size) {
     return STR_SUCCESS;
 }
 
+/**
+ * @brief Unsigned long to hexadecimal string.
+ * @param number The unsigned long to convert.
+ * @param buffer The provided string buffer to write the number in hexadecimal.
+ * @param size The size of the provided buffer in bytes/chars.
+ * @return STR_SUCCESS if success, STR_ERR_INVALID_ARG if invalid args (string/buffer = null), STR_ERR_BUFFER_TOO_SMALL if provided buffer is too small (will write partial string).
+ */
 int ultox(uint64_t number, char *buffer, size_t size) {
     static char hex_chars[] = {
         0x30, //0
@@ -88,7 +102,13 @@ int ultox(uint64_t number, char *buffer, size_t size) {
     return STR_SUCCESS;
 }
 
-//Start inclusive, end exclusive.
+/**
+ * @brief Reverses the provided string over the provided indeces in place.
+ * @param str The string to be reversed.
+ * @param start_index The start bound for the reversal space (inclusive).
+ * @param end_index The end bound for the reversal space (exclusive).
+ * @return STR_SUCCESS on success, STR_ERR_INVALID_ARG if arguments are invalid (string is null).
+ */
 int str_reverse(char *str, size_t start_index, size_t end_index) {
     if (str == NULL) return STR_ERR_INVALID_ARG;
 
