@@ -53,6 +53,10 @@ typedef volatile struct tagHBA_MEM
 	HBA_PORT	ports[32];	// 1 ~ 32
 } __attribute((packed)) HBA_MEM;
 
+static int ahci_read(void *driver_data, uint64_t lba, uint64_t count, void *buffer);
+static int ahci_write(void *driver_data, uint64_t lba, uint64_t count, const void *buffer);
+static void ahci_init_port(HBA_PORT *port, HBA_MEM *hba);
+
 static void ahci_init_device(pci_device_t *pci_device) {
     //We need to get the BAR5 address, and check if its 64 bit addressing.
     uint64_t bar_address;
@@ -79,6 +83,7 @@ static void ahci_init_device(pci_device_t *pci_device) {
 		while (hba->bohc & 1);
 	}
 
+	//We reset the controller.
 	hba->ghc |= 1;
 
 	while (hba->ghc & 1);
@@ -105,4 +110,8 @@ static void ahci_init_device(pci_device_t *pci_device) {
 			}
 		}
 	}
+}
+
+static void ahci_init_port(HBA_PORT *port, HBA_MEM *hba) {
+
 }
