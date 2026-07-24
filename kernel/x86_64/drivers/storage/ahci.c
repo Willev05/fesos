@@ -6,6 +6,7 @@
 #include "../../include/memory/kmalloc.h"
 #include "../../include/kernel/time.h"
 #include "../../include/kernel/errno.h"
+#include "../../include/common/printf.h"
 
 typedef volatile struct tagHBA_PORT
 {
@@ -55,11 +56,16 @@ typedef volatile struct tagHBA_MEM
 	HBA_PORT	ports[32];	// 1 ~ 32
 } __attribute((packed)) HBA_MEM;
 
+typedef enum {
+	AHCI_PORT_OK,
+	AHCI_PORT_TIMEOUT
+} ahci_port_return_t;
+
 static int ahci_read(void *driver_data, uint64_t lba, uint64_t count, void *buffer);
 static int ahci_write(void *driver_data, uint64_t lba, uint64_t count, const void *buffer);
-static void ahci_init_port(HBA_PORT *port, HBA_MEM *hba);
+static ahci_port_return_t ahci_init_port(HBA_PORT *port, HBA_MEM *hba);
 
-static void ahci_init_device(pci_device_t *pci_device) {
+static int ahci_init_device(pci_device_t *pci_device) {
     //We need to get the BAR5 address, and check if its 64 bit addressing.
     uint64_t bar_address;
     if ((pci_device->bars[5] >> 2) & 0x1) {
@@ -92,11 +98,15 @@ static void ahci_init_device(pci_device_t *pci_device) {
 
 	while ((hba->ghc & 1) && (tsc_timer_get_ms() - start_ms < 100)) tsc_sleep_ms(1);
 	if (hba->ghc & 1) {
-		//return -ETIMEDOUT;
+		kprintf("[AHCI] Controller at bus %lu, device %lu, function %lu has timed out after sending reset command.", pci_device->bus, pci_device->device, pci_device->function);
+		return -ETIMEDOUT;
 	} 
 
 	//Then, we enable AHCI mode.
 	hba->ghc |= (1 << 31);
+
+	//We then also wait again to ensure HBA can probe the ports and update PI properly after reset.
+	tsc_sleep_ms(20);
 
 	//Now, its time to read the implemented and connected ports.
 	//Outside loop will look for the implemented ports (physically wired) and the inner one will check if they are connected.
@@ -119,6 +129,6 @@ static void ahci_init_device(pci_device_t *pci_device) {
 	}
 }
 
-static void ahci_init_port(HBA_PORT *port, HBA_MEM *hba) {
+static ahci_port_return_t ahci_init_port(HBA_PORT *port, HBA_MEM *hba) {
 
 }
