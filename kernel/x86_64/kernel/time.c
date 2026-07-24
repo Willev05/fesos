@@ -5,6 +5,9 @@
 
 static uint64_t tsc_tick_per_ms;
 
+/**
+ * @brief Initialize the tsc functions. Specifically, calculates the ticks/cycle per ms.
+ */
 void tsc_timer_init() {
     //We select the second PIT channel, since it is the only one with readable low/high on bit 5.
     //0xB6 is Channel 2, lobyte/hibyte access mode, Mode 3 (square wave gen) and 16-bit binary
@@ -27,4 +30,26 @@ void tsc_timer_init() {
 
     uint64_t end_tsc = rdtsc();
     tsc_tick_per_ms = (end_tsc - start_tsc) / 10;
+}
+
+/**
+ * @brief Returns the calculated ms since startup using tsc.
+ * @return The ms since computer startup,
+ */
+uint64_t tsc_timer_get_ms() {
+    //We get the tsc state.
+    uint64_t tsc = rdtsc();
+    //Then ms is simply the cycle count / cycle per ms.
+    return tsc / tsc_tick_per_ms;
+}
+
+/**
+ * @brief A loop that will wait for n ms while keeping low power (PAUSE).
+ * @param ms The amount of ms to sleep for.
+ */
+void tsc_sleep_ms(uint64_t ms) {
+    uint64_t start_tsc = rdtsc();
+    uint64_t goal_tsc = ms * tsc_tick_per_ms;
+
+    while ((rdtsc() - start_tsc) < goal_tsc) cpu_relax();
 }
