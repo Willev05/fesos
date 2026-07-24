@@ -10,6 +10,7 @@
 #include "include/kernel/isr.h"
 #include "include/common/stdtypes.h"
 #include "include/memory/kmalloc.h"
+#include "include/common/printf.h"
 
 uint32_t magic_number = 0xDEADC0DE;
 
@@ -28,18 +29,18 @@ void _start(boot_info *BootInfo) {
     serial_init();
     idt_init();
     gdt_init();
-    serial_puts("Finished loading tables (gdt and idt)\n");
+    kprintf("Finished loading tables (gdt and idt)\n");
 
     pmm_init((uint64_t)BootInfo);
     vmm_init((uint64_t)BootInfo);
     vma_init();
     isr_register_interrupt_handler(14, vmm_page_fault_callback);
 
-    serial_puts("Finished memory manager init.\n");
+    kprintf("Finished memory manager init.\n");
 
     kmalloc_init();
 
-    serial_puts("Finished kmalloc init.\n");
+    kprintf("Finished kmalloc init.\n");
     
     volatile uint64_t *massive_integer = kmalloc(sizeof(uint64_t));
     *massive_integer = 502;
@@ -58,7 +59,7 @@ void _start(boot_info *BootInfo) {
     kfree(bf2);
     kfree(page_int);
 
-    serial_puts("Hello from the kernel!\n");
+    kprintf("Hello from the kernel!\n");
 
     while (1) {
         __asm__("hlt");

@@ -4,6 +4,8 @@
 /* Note: Structure definitions derived from OSDev Wiki. https://wiki.osdev.org/AHCI */
 #include "../../include/buses/pci.h"
 #include "../../include/memory/kmalloc.h"
+#include "../../include/kernel/time.h"
+#include "../../include/kernel/errno.h"
 
 typedef volatile struct tagHBA_PORT
 {
@@ -86,7 +88,12 @@ static void ahci_init_device(pci_device_t *pci_device) {
 	//We reset the controller.
 	hba->ghc |= 1;
 
-	while (hba->ghc & 1);
+	uint64_t start_ms = tsc_timer_get_ms();
+
+	while ((hba->ghc & 1) && (tsc_timer_get_ms() - start_ms < 100)) tsc_sleep_ms(1);
+	if (hba->ghc & 1) {
+		//return -ETIMEDOUT;
+	} 
 
 	//Then, we enable AHCI mode.
 	hba->ghc |= (1 << 31);
