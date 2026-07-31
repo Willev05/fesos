@@ -87,7 +87,8 @@ int vmm_unmap(uint64_t v_addr, uint64_t pages) {
     
         //Here, we need to check if this will be a huge page or not.
         if (PD->entries[PD_index].bits.huge_page) {
-            PD->entries[PD_index].bits.present = 0;
+            PD->entries[PD_index].raw = 0ULL;
+            __asm__ volatile ("invlpg (%0)" :: "r"(v_addr) : "memory");
             v_addr += 0x200000;
             continue;
         }
@@ -97,6 +98,7 @@ int vmm_unmap(uint64_t v_addr, uint64_t pages) {
         uint64_t PT_index = (v_addr >> 12) & 0x1FF;
 
         PT->entries[PT_index].raw = 0ULL;
+        __asm__ volatile ("invlpg (%0)" :: "r"(v_addr) : "memory");
         v_addr += 0x1000;
     }
     return pages;
