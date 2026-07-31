@@ -78,7 +78,10 @@ void kfree(void *ptr) {
     //We will start by getting the page descriptor for this returned pointer.
     uint64_t v_addr = (uint64_t)ptr;
     //We check wether or not the ptr passed was allocated through a page or bucket. If the ptr is page alligned, it was page allocation since buckets will NEVER return a page alligned pointer (since metadata lives there)
-    if ((v_addr & 0xFFF) == 0) vma_free_memory_from_ktree(v_addr);
+    if ((v_addr & 0xFFF) == 0){
+        vma_free_memory_from_ktree(v_addr);
+        return;
+    } 
 
     kmalloc_page_descriptor_t *page_descriptor = (kmalloc_page_descriptor_t*)(v_addr & ~(0xFFFULL));
     
