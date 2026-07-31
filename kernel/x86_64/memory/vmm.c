@@ -96,7 +96,7 @@ int vmm_unmap(uint64_t v_addr, uint64_t pages) {
 
         uint64_t PT_index = (v_addr >> 12) & 0x1FF;
 
-        PT->entries[PT_index].bits.present = 0;
+        PT->entries[PT_index].raw = 0ULL;
         v_addr += 0x1000;
     }
     return pages;
