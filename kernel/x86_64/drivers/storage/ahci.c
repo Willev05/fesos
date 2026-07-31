@@ -67,14 +67,7 @@ static ahci_port_return_t ahci_init_port(HBA_PORT *port, HBA_MEM *hba);
 
 static int ahci_init_device(pci_device_t *pci_device) {
     //We need to get the BAR5 address, and check if its 64 bit addressing.
-    uint64_t bar_address;
-    if ((pci_device->bars[5] >> 2) & 0x1) {
-        //Then its 64 bits, and we need to merge the address into its full 64 bit form.
-        uint64_t address_low = pci_device->bars[4] & ~0xFU;
-        uint64_t address_high = pci_device->bars[5] & ~0xFU;
-        bar_address = (address_high << 32) | address_low;
-    }
-    else bar_address = pci_device->bars[5] & ~0xF;
+    uint64_t bar_address = pci_device->bars[5] & ~0xF;
 
     //Turn on bus mastering and memory space in the PCI command register.
     uint16_t pci_command_register = (uint16_t)pci_read_config(pci_device, 0x6, 2);
