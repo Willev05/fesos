@@ -58,7 +58,8 @@ typedef volatile struct tagHBA_MEM
 
 typedef enum {
 	AHCI_PORT_OK,
-	AHCI_PORT_TIMEOUT
+	AHCI_PORT_TIMEOUT,
+	AHCI_PORT_NOT_IMPLEMENTED
 } ahci_port_return_t;
 
 static int ahci_read(void *driver_data, uint64_t lba, uint64_t count, void *buffer);
@@ -66,6 +67,7 @@ static int ahci_write(void *driver_data, uint64_t lba, uint64_t count, const voi
 static ahci_port_return_t ahci_init_port(HBA_PORT *port, HBA_MEM *hba);
 
 static int ahci_init_device(pci_device_t *pci_device) {
+	kprintf("[AHCI] Found controller at bus %lu, device %lu, function %lu.", pci_device->bus, pci_device->device, pci_device->function);
     //We need to get the BAR5 address, and check if its 64 bit addressing.
     uint64_t bar_address = pci_device->bars[5] & ~0xF;
 
@@ -116,12 +118,20 @@ static int ahci_init_device(pci_device_t *pci_device) {
 
 			//If the device is detected and communicating (det == 0x3) AND the interface is in an active state (ipm == 0x1) then the port is active and connected.
 			if (det == 3 && ipm == 1) {
-				//TODO: Implement the port stuff
+				kprintf("[AHCI] Found drive on Port %lu.\n", (uint64_t)i);
+				ahci_init_port(port, hba);
 			}
 		}
 	}
 }
 
 static ahci_port_return_t ahci_init_port(HBA_PORT *port, HBA_MEM *hba) {
+	uint32_t sig = port->sig;
 
+	//Here, we check the port type.
+	switch (sig) {
+		case 0x00000101:
+			kprintf("[AHCI] Type: SATA HDD/SSD\n");
+			break;
+	}
 }

@@ -140,10 +140,26 @@ void *kmap_mmio(uint64_t physical_address, size_t size, mmio_flags_t mmio_flag) 
         vmm_flags |= PT_DISABLE_CACHING;
     }
 
-    //We want to make sure the size is page-alligned, since we need this to work in pages.
-    size = (size + 4095) & ~4095;
+    //Calculate the page offset since we need to account for the bytes in rounding down the address to page boundary. We also need it to add to vaddr in order to make caller have the same offset into the MMIO area as expected.
+    uint64_t page_offset = physical_address & 0xFFFULL;
+    size += page_offset;
 
-    return vma_allocate_memory_from_ktree(size, VMA_HARDWARE_MMIO, vmm_flags, NULL);
+    //We want to make sure the size is also page alligned at the upper boundary.
+    size = (size + 0xFFF) & ~0xFFFULL;
+
+    //We need to also page-align the starting address.
+    physical_address &= ~0xFFFULL;
+
+    //Now, we preapare a backing struct to inform the VMA of the physical address.
+    vma_backing backing;
+    backing.mmio.physical_start = physical_address;
+
+    //Then, call the function. We need to calculate the proper offset into the initial page since the physical address may not be page alligned. We then return the proper virtual one matching the offset of physical address.
+    uint8_t *virtual_base = (uint8_t*) vma_allocate_memory_from_ktree(size, VMA_HARDWARE_MMIO, vmm_flags, &backing);
+    //IF null, we simply return null.
+    if (!virtual_base) return NULL;
+
+    return  (void*)(virtual_base + page_offset);
 }
 
 //Private static helper functions. 
