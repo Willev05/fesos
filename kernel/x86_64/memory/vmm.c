@@ -11,7 +11,6 @@
 static page_table *PML4; 
 
 static page_table *vmm_walk_and_crate_next_table(page_table *table, uint16_t index);
-static void vmm_zero_page(uint64_t p_addr);
 
 void vmm_init(uint64_t bi_v) {
     boot_info *bi = (boot_info*)bi_v;
@@ -42,11 +41,6 @@ int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags) {
             PD->entries[PD_index].bits.execute_disable = (flags & 0x40) >> 6;
 
             PD->entries[PD_index].bits.physical_address = (p_addr >> 12) & ~0x1FFULL;
-
-            for (int i = 0; i < 512; i++) {
-                vmm_zero_page(p_addr);
-                p_addr += 0x1000;
-            }
             
             v_addr += 0x200000;
             continue;
@@ -66,7 +60,6 @@ int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags) {
 
         PT->entries[PT_index].bits.physical_address = (p_addr >> 12);
 
-        vmm_zero_page(p_addr);
         v_addr += 0x1000;
         p_addr += 0x1000;
     }
@@ -155,7 +148,6 @@ static page_table *vmm_walk_and_crate_next_table(page_table *table, uint16_t ind
     if (!table->entries[index].bits.present) {
         //Allocate a PD table
         uint64_t next_table_p = (uint64_t)pmm_allocate_frames(1, 4096);
-        vmm_zero_page(next_table_p);
         next_table = (page_table*)(next_table_p + DIRECT_MAP_BASE);
 
         table->entries[index].bits.present = 1;
@@ -166,11 +158,4 @@ static page_table *vmm_walk_and_crate_next_table(page_table *table, uint16_t ind
     else next_table = (page_table*)((table->entries[index].bits.physical_address << 12) + DIRECT_MAP_BASE);
 
     return next_table;
-}
-
-static void vmm_zero_page(uint64_t p_addr) {
-    uint64_t *ptr = (uint64_t*)(p_addr + DIRECT_MAP_BASE);
-    for (int i = 0; i < 512; i++){
-        ptr[i] = 0;
-    }
 }
