@@ -17,6 +17,7 @@ static uint64_t memory_used_frame_count;
 static void set_bitmap_bit(uint64_t bit_number);
 static void unset_bitmap_bit(uint64_t bit_number);
 static uint8_t get_bitmap_bit(uint64_t bit_number);
+static void pmm_zero_page(uint64_t p_addr);
 
 //Initialize the PMM. Includes reading the UEFI mmap to get available physical memory area and allocate the bitmap for use in other functions. MUST BE RAN FIRST.
 void pmm_init(uint64_t bi_v) {
@@ -76,7 +77,10 @@ void *pmm_allocate_frames(uint64_t count, uint64_t alignment) {
             //We then mark these as in use so they do not get reallocated.
             for (uint64_t i = 0; i < count; i++) {
                 set_bitmap_bit(base + i);
+                //And we also zero out these pages.
+                pmm_zero_page((base + i) * 0x1000);
             }
+            
             return (void*)(base * 4096);
         }
 
@@ -102,4 +106,11 @@ static void unset_bitmap_bit(uint64_t bit_number) {
 
 static uint8_t get_bitmap_bit(uint64_t bit_number) {
     return (bitmap[bit_number / 8] >> (bit_number % 8) & 0x1);
+}
+
+static void pmm_zero_page(uint64_t p_addr) {
+    uint64_t *ptr = (uint64_t*)(p_addr + DIRECT_MAP_BASE);
+    for (int i = 0; i < 512; i++){
+        ptr[i] = 0;
+    }
 }
