@@ -11,6 +11,7 @@
 #include "include/common/stdtypes.h"
 #include "include/memory/kmalloc.h"
 #include "include/common/printf.h"
+#include "include/kernel/time.h"
 
 uint32_t magic_number = 0xDEADC0DE;
 
@@ -29,7 +30,8 @@ void _start(boot_info *BootInfo) {
     serial_init();
     idt_init();
     gdt_init();
-    kprintf("Finished loading tables (gdt and idt)\n");
+    tsc_timer_init();
+    kprintf("Finished loading tables (gdt and idt) and other basic systems\n");
 
     pmm_init((uint64_t)BootInfo);
     vmm_init((uint64_t)BootInfo);

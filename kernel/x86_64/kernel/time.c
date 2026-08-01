@@ -10,8 +10,8 @@ static uint64_t tsc_tick_per_ms;
  */
 void tsc_timer_init() {
     //We select the second PIT channel, since it is the only one with readable low/high on bit 5.
-    //0xB6 is Channel 2, lobyte/hibyte access mode, Mode 3 (square wave gen) and 16-bit binary
-    outb(0x43, 0xB6);
+    //0xB6 is Channel 2, lobyte/hibyte access mode, Mode 0 hibyte/lobyte and 16-bit binary
+    outb(0x43, 0xB0);
 
     //Then, we need to get ~10ms at 1.193182 MHz
     uint16_t pit_count = 11931;
