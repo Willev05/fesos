@@ -73,9 +73,9 @@ static int ahci_init_device(pci_device_t *pci_device) {
     uint64_t bar_address = pci_device->bars[5] & ~0xF;
 
     //Turn on bus mastering and memory space in the PCI command register.
-    uint16_t pci_command_register = (uint16_t)pci_read_config(pci_device, 0x6, 2);
+    uint16_t pci_command_register = (uint16_t)pci_read_config(pci_device, 0x4, 2);
     pci_command_register |= 0x6;
-    pci_write_config(pci_device, 0x6, pci_command_register, 2);
+    pci_write_config(pci_device, 0x4, pci_command_register, 2);
 
     //We then map this to MMIO area. 
     HBA_MEM *hba = kmap_mmio(bar_address, sizeof(HBA_MEM), MMIO_DEFAULT);
