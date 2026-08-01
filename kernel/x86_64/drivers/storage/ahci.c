@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Note: Structure definitions derived from OSDev Wiki. https://wiki.osdev.org/AHCI */
+/* Note: Delays, timeouts, etc from spec document. https://www.intel.com/content/dam/www/public/us/en/documents/technical-specifications/serial-ata-ahci-spec-rev1-3-1.pdf */
 #include "../../include/buses/pci.h"
 #include "../../include/memory/kmalloc.h"
 #include "../../include/kernel/time.h"
@@ -64,7 +65,7 @@ typedef enum {
 
 static int ahci_read(void *driver_data, uint64_t lba, uint64_t count, void *buffer);
 static int ahci_write(void *driver_data, uint64_t lba, uint64_t count, const void *buffer);
-static ahci_port_return_t ahci_init_port(HBA_PORT *port, HBA_MEM *hba);
+static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba);
 
 static int ahci_init_device(pci_device_t *pci_device) {
 	kprintf("[AHCI] Found controller at bus %lu, device %lu, function %lu.", pci_device->bus, pci_device->device, pci_device->function);
@@ -91,7 +92,7 @@ static int ahci_init_device(pci_device_t *pci_device) {
 
 	uint64_t start_ms = tsc_timer_get_ms();
 
-	while ((hba->ghc & 1) && (tsc_timer_get_ms() - start_ms < 100)) tsc_sleep_ms(1);
+	while ((hba->ghc & 1) && (tsc_timer_get_ms() - start_ms < 1000)) tsc_sleep_ms(1);
 	if (hba->ghc & 1) {
 		kprintf("[AHCI] Controller at bus %lu, device %lu, function %lu has timed out after sending reset command.", pci_device->bus, pci_device->device, pci_device->function);
 		return -ETIMEDOUT;
@@ -119,19 +120,53 @@ static int ahci_init_device(pci_device_t *pci_device) {
 			//If the device is detected and communicating (det == 0x3) AND the interface is in an active state (ipm == 0x1) then the port is active and connected.
 			if (det == 3 && ipm == 1) {
 				kprintf("[AHCI] Found drive on Port %lu.\n", (uint64_t)i);
-				ahci_init_port(port, hba);
+				ahci_init_port(i, hba);
 			}
 		}
 	}
 }
 
-static ahci_port_return_t ahci_init_port(HBA_PORT *port, HBA_MEM *hba) {
+static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
+	HBA_PORT *port = &hba->ports[port_num];
 	uint32_t sig = port->sig;
 
 	//Here, we check the port type.
 	switch (sig) {
 		case 0x00000101:
-			kprintf("[AHCI] Type: SATA HDD/SSD\n");
+			kprintf("[AHCI] Port %u: Type: SATA HDD/SSD\n", port_num);
+			break;
+		case 0xEB140101:
+			kprintf("[AHCI] Port %u: Type: ATAPI drive, skipping!", port_num);
+			return AHCI_PORT_NOT_IMPLEMENTED;
+			break;
+		default:
+			kprintf("[AHCI] Port %u: Type: Unsupported, skipping!", port_num);
+			return AHCI_PORT_NOT_IMPLEMENTED;
 			break;
 	}
+
+	//Now, we are sure we only have a SATA HDD/SSD.
+	//Even though we reset the controller, we will still stop verify and stop the DMA engine.
+
+	//We start by setting bit 0 (Start) to 0 sgutting down the DMA engine.
+	port->cmd &= ~0x1U;
+
+	//And wait to see if success shut down (bit 15).
+	uint64_t start_ms = tsc_timer_get_ms();
+	while ((port->cmd & (0x1U << 15)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
+	if (port->cmd & (0x1U << 15)) {
+		kprintf("[AHCI] Port %u has timed out after sending DMA stop command.", port_num);
+		return AHCI_PORT_TIMEOUT;
+	} 
+
+	//Then set bit 4 (FIS Receive Enable) to 0 to disable FIS receive.
+	port->cmd &= ~0x10U;
+
+	//And wait again for bit 14.
+	start_ms = tsc_timer_get_ms();
+	while ((port->cmd & (0x1U << 14)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
+	if (port->cmd & (0x1U << 14)) {
+		kprintf("[AHCI] Port %u has timed out after sending FIS Receive disable.", port_num);
+		return AHCI_PORT_TIMEOUT;
+	} 
 }
