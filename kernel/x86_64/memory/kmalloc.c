@@ -185,6 +185,24 @@ dma_block_t kallocate_dma(size_t page_count) {
     return block;
 }
 
+/**
+ * @brief Unmaps mmio and frees from the kernel memory tree.
+ * @param virtual_address Pointer to the virtual memory to be unmapped.
+ * @param size Size in bytes of the memory area to unmap (same as passed to map_mmio).
+ */
+void kunmap_mmio(void *virtual_address) {
+    vma_free_memory_from_ktree((uint64_t)virtual_address);
+}
+
+/**
+ * @brief Free a DMA region.
+ * @param block The DMA block representing the region you wish to free.
+ */
+void kfree_dma(dma_block_t block) {
+    pmm_free_frames((void *)block.physical_addr, block.page_count);
+    vma_free_memory_from_ktree((uint64_t)block.virtual_addr);
+}
+
 //Private static helper functions. 
 //Assumes size is NOT 0.
 static uint8_t get_bucket_from_size(size_t size) {
