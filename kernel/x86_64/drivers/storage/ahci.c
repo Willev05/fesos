@@ -183,6 +183,29 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 		return AHCI_PORT_TIMEOUT;
 	} 
 
+	dma_block_t port_mem = kallocate_dma(1);
+	uint64_t dma_physical_base = port_mem.physical_addr;
+
+	//We will take the first 1024 bytes for the command list. (Needs 1KB alignment, satisifed by 4KB page)
+	port->clb = (uint32_t)(dma_physical_base & 0xFFFFFFFF);
+	port->clbu = (uint32_t)(dma_physical_base >> 32);
+
+	//After, we can put the FIS receive base which will take 256 bytes. (Needs 256B alignment, satisifed by 1KB into the page)
+	uint64_t fb64 = dma_physical_base + 1024;
+	port->fb = (uint32_t)(fb64 & 0xFFFFFFFF);
+	port->fbu = (uint32_t)(fb64 >> 32);
+
+	//Then, renable the FIS receive engine.
+	port->cmd |= 0x10U;
+
+	//And wait again for bit 14.
+	start_ms = tsc_timer_get_ms();
+	while (!(port->cmd & (0x1U << 14)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
+	if (port->cmd & !(0x1U << 14)) {
+		kprintf("[AHCI] Port %u has timed out after sending FIS Receive enable.\n", port_num);
+		return AHCI_PORT_TIMEOUT;
+	} 
+
 	uint32_t sig = port->sig;
 	//Here, we check the port type.
 	switch (sig) {
@@ -200,4 +223,5 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	}
 
 	//Now, we are sure we only have a SATA HDD/SSD.
+	//Clear the potential interrupts and/or errors.
 }
