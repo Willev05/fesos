@@ -13,6 +13,9 @@
 #include "include/common/printf.h"
 #include "include/kernel/time.h"
 
+#include "include/buses/pci.h"
+#include "include/drivers/storage/ahci.h"
+
 uint32_t magic_number = 0xDEADC0DE;
 
 int uninitialized_var;
@@ -60,6 +63,11 @@ void _start(boot_info *BootInfo) {
     kfree(another_massive_integer);
     kfree(bf2);
     kfree(page_int);
+
+    //test ahci
+    pci_device_t ahci_cont;
+    pci_find_device(0x01, 0x06, &ahci_cont);
+    ahci_init_device(&ahci_cont);
 
     kprintf("Hello from the kernel!\n");
 

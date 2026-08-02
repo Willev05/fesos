@@ -158,24 +158,7 @@ int ahci_init_device(pci_device_t *pci_device) {
 
 static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	HBA_PORT *port = &hba->ports[port_num];
-	uint32_t sig = port->sig;
 
-	//Here, we check the port type.
-	switch (sig) {
-		case 0x00000101:
-			kprintf("[AHCI] Port %u: Type: SATA HDD/SSD\n", port_num);
-			break;
-		case 0xEB140101:
-			kprintf("[AHCI] Port %u: Type: ATAPI drive, skipping!\n", port_num);
-			return AHCI_PORT_NOT_IMPLEMENTED;
-			break;
-		default:
-			kprintf("[AHCI] Port %u: Type: Unsupported (%x), skipping!\n", port_num, sig);
-			return AHCI_PORT_NOT_IMPLEMENTED;
-			break;
-	}
-
-	//Now, we are sure we only have a SATA HDD/SSD.
 	//Even though we reset the controller, we will still stop verify and stop the DMA engine.
 
 	//We start by setting bit 0 (Start) to 0 sgutting down the DMA engine.
@@ -199,4 +182,22 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 		kprintf("[AHCI] Port %u has timed out after sending FIS Receive disable.\n", port_num);
 		return AHCI_PORT_TIMEOUT;
 	} 
+
+	uint32_t sig = port->sig;
+	//Here, we check the port type.
+	switch (sig) {
+		case 0x00000101:
+			kprintf("[AHCI] Port %u: Type: SATA HDD/SSD\n", port_num);
+			break;
+		case 0xEB140101:
+			kprintf("[AHCI] Port %u: Type: ATAPI drive, skipping!\n", port_num);
+			return AHCI_PORT_NOT_IMPLEMENTED;
+			break;
+		default:
+			kprintf("[AHCI] Port %u: Type: Unsupported (%x), skipping!\n", port_num, sig);
+			return AHCI_PORT_NOT_IMPLEMENTED;
+			break;
+	}
+
+	//Now, we are sure we only have a SATA HDD/SSD.
 }
