@@ -42,6 +42,7 @@ int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags) {
 
             PD->entries[PD_index].bits.physical_address = (p_addr >> 12) & ~0x1FFULL;
             
+            __asm__ volatile ("invlpg (%0)" :: "r"(v_addr) : "memory");
             v_addr += 0x200000;
             continue;
         }
@@ -60,6 +61,7 @@ int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags) {
 
         PT->entries[PT_index].bits.physical_address = (p_addr >> 12);
 
+        __asm__ volatile ("invlpg (%0)" :: "r"(v_addr) : "memory");
         v_addr += 0x1000;
         p_addr += 0x1000;
     }
