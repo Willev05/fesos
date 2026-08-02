@@ -28,6 +28,12 @@ typedef struct {
     kmalloc_page_descriptor_t *full_page_list;
 } kmalloc_bucket_t;
 
+typedef struct {
+    void* virtual_addr;
+    uint64_t physical_addr;
+    size_t page_count;
+} dma_block_t;
+
 typedef enum {
     MMIO_DEFAULT,
     MMIO_WRITE_COMBINING
@@ -37,3 +43,4 @@ void kmalloc_init();
 void *kmalloc(size_t size);
 void kfree(void *ptr);
 void *kmap_mmio(uint64_t physical_address, size_t size, mmio_flags_t mmio_flag);
+dma_block_t kallocate_dma(size_t page_count);

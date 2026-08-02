@@ -162,6 +162,29 @@ void *kmap_mmio(uint64_t physical_address, size_t size, mmio_flags_t mmio_flag) 
     return  (void*)(virtual_base + page_offset);
 }
 
+/**
+ * @brief Allocates a DMA memory area for use in device drivers.
+ * @param page_count The count of pages to be allocated. Will be contiguous physically and virtually.
+ * @return A struct containing the virtual and physical addresses, and the page count for later use.
+ */
+dma_block_t kallocate_dma(size_t page_count) {
+    dma_block_t block;
+
+    block.page_count = page_count;
+
+    uint64_t physical_address = (uint64_t)pmm_allocate_frames(page_count, 0x1000);
+    block.physical_addr = physical_address;
+
+    if (!physical_address) {
+        block.virtual_addr = NULL;
+        return block;
+    }
+
+    block.virtual_addr = kmap_mmio(physical_address, 4096 * page_count, MMIO_DEFAULT);
+
+    return block;
+}
+
 //Private static helper functions. 
 //Assumes size is NOT 0.
 static uint8_t get_bucket_from_size(size_t size) {
