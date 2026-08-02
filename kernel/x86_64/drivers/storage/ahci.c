@@ -67,9 +67,39 @@ static int ahci_read(void *driver_data, uint64_t lba, uint64_t count, void *buff
 static int ahci_write(void *driver_data, uint64_t lba, uint64_t count, const void *buffer);
 static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba);
 
-static int ahci_init_device(pci_device_t *pci_device) {
-	kprintf("[AHCI] Found controller at bus %lu, device %lu, function %lu.", pci_device->bus, pci_device->device, pci_device->function);
-    //We need to get the BAR5 address, and check if its 64 bit addressing.
+int ahci_init_device(pci_device_t *pci_device) {
+	kprintf("[AHCI] Found controller at bus %lu, device %lu, function %lu.\n", pci_device->bus, pci_device->device, pci_device->function);
+
+	//Start with looking at its power state.
+	//Requires us to find it within the capability list.
+	//Start by checking if said capability list exists.
+	uint16_t status_reg = pci_read_config(pci_device, 0x6, 2);
+	//If bit 4 is set, then the list exists!
+	if (status_reg & 0x10) {
+		kprintf("[AHCI] Controller supports capability list. Exploring for potential power management.\n");
+		//We will start to browse the linked-list of capability pointers. 
+		uint8_t next_offset = pci_read_config(pci_device, 0x34, 1);
+		while (next_offset != 0) {
+			uint8_t current_offset = next_offset;
+			uint16_t cap = pci_read_config(pci_device, current_offset, 2);
+
+			uint8_t cap_id = cap & 0xFF;
+			next_offset = (uint8_t)(cap >> 8);
+
+			kprintf("[AHCI] Found capability %x at offset %x.\n", cap_id, current_offset);
+			if (cap_id == 0x1) {
+				//Found the power capability
+				kprintf("[AHCI] Controller supports power management. Attempting to wake.\n");
+				uint16_t pmcsr = pci_read_config(pci_device, current_offset + 0x4, 2);
+				kprintf("[AHCI] Controller power state: %u.\n", pmcsr & 0x3);
+				pmcsr &= ~0x3U;
+				pci_write_config(pci_device, current_offset + 0x4, pmcsr, 2);
+				break;
+			}
+		}
+	}
+
+    //We need to get the BAR5 address.
     uint64_t bar_address = pci_device->bars[5] & ~0xF;
 
     //Turn on bus mastering and memory space in the PCI command register.
@@ -94,7 +124,7 @@ static int ahci_init_device(pci_device_t *pci_device) {
 
 	while ((hba->ghc & 1) && (tsc_timer_get_ms() - start_ms < 1000)) tsc_sleep_ms(1);
 	if (hba->ghc & 1) {
-		kprintf("[AHCI] Controller at bus %lu, device %lu, function %lu has timed out after sending reset command.", pci_device->bus, pci_device->device, pci_device->function);
+		kprintf("[AHCI] Controller at bus %lu, device %lu, function %lu has timed out after sending reset command.\n", pci_device->bus, pci_device->device, pci_device->function);
 		return -ETIMEDOUT;
 	} 
 
@@ -136,11 +166,11 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 			kprintf("[AHCI] Port %u: Type: SATA HDD/SSD\n", port_num);
 			break;
 		case 0xEB140101:
-			kprintf("[AHCI] Port %u: Type: ATAPI drive, skipping!", port_num);
+			kprintf("[AHCI] Port %u: Type: ATAPI drive, skipping!\n", port_num);
 			return AHCI_PORT_NOT_IMPLEMENTED;
 			break;
 		default:
-			kprintf("[AHCI] Port %u: Type: Unsupported, skipping!", port_num);
+			kprintf("[AHCI] Port %u: Type: Unsupported (%x), skipping!\n", port_num, sig);
 			return AHCI_PORT_NOT_IMPLEMENTED;
 			break;
 	}
@@ -155,7 +185,7 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	uint64_t start_ms = tsc_timer_get_ms();
 	while ((port->cmd & (0x1U << 15)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
 	if (port->cmd & (0x1U << 15)) {
-		kprintf("[AHCI] Port %u has timed out after sending DMA stop command.", port_num);
+		kprintf("[AHCI] Port %u has timed out after sending DMA stop command.\n", port_num);
 		return AHCI_PORT_TIMEOUT;
 	} 
 
@@ -166,7 +196,7 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	start_ms = tsc_timer_get_ms();
 	while ((port->cmd & (0x1U << 14)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
 	if (port->cmd & (0x1U << 14)) {
-		kprintf("[AHCI] Port %u has timed out after sending FIS Receive disable.", port_num);
+		kprintf("[AHCI] Port %u has timed out after sending FIS Receive disable.\n", port_num);
 		return AHCI_PORT_TIMEOUT;
 	} 
 }
