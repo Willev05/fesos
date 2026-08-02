@@ -214,10 +214,12 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 			break;
 		case 0xEB140101:
 			kprintf("[AHCI] Port %u: Type: ATAPI drive, skipping!\n", port_num);
+			kfree_dma(port_mem);
 			return AHCI_PORT_NOT_IMPLEMENTED;
 			break;
 		default:
 			kprintf("[AHCI] Port %u: Type: Unsupported (%x), skipping!\n", port_num, sig);
+			kfree_dma(port_mem);
 			return AHCI_PORT_NOT_IMPLEMENTED;
 			break;
 	}
