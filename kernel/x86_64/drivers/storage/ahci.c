@@ -1,13 +1,15 @@
 //* File: ahci.c */
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* Note: Structure definitions derived from OSDev Wiki. https://wiki.osdev.org/AHCI */
+/* Note: Structure definitions from OSDev Wiki. https://wiki.osdev.org/AHCI */
 /* Note: Delays, timeouts, etc from spec document. https://www.intel.com/content/dam/www/public/us/en/documents/technical-specifications/serial-ata-ahci-spec-rev1-3-1.pdf */
+/* Note: For SATA commands. https://tc.gts3.org/cs3210/2016/spring/r/hardware/ATA8-ACS.pdf */
 #include "../../include/buses/pci.h"
 #include "../../include/memory/kmalloc.h"
 #include "../../include/kernel/time.h"
 #include "../../include/kernel/errno.h"
 #include "../../include/common/printf.h"
+#include "../../include/common/stdstr.h"
 
 typedef volatile struct tagHBA_PORT
 {
@@ -85,6 +87,18 @@ typedef struct tagHBA_CMD_HEADER
 	uint32_t rsv1[4];	// Reserved
 }  __attribute__((packed)) HBA_CMD_HEADER;
 
+typedef struct tagHBA_PRDT_ENTRY
+{
+	uint32_t dba;		// Data base address
+	uint32_t dbau;		// Data base address upper 32 bits
+	uint32_t rsv0;		// Reserved
+
+	// DW3
+	uint32_t dbc:22;		// Byte count, 4M max (0-based)
+	uint32_t rsv1:9;		// Reserved
+	uint32_t i:1;		// Interrupt on completion
+}  __attribute__((packed)) HBA_PRDT_ENTRY;
+
 typedef struct tagHBA_CMD_TBL
 {
 	// 0x00
@@ -99,18 +113,6 @@ typedef struct tagHBA_CMD_TBL
 	// 0x80
 	HBA_PRDT_ENTRY	prdt_entry[1];	// Physical region descriptor table entries, 0 ~ 65535
 }  __attribute__((packed)) HBA_CMD_TBL;
-
-typedef struct tagHBA_PRDT_ENTRY
-{
-	uint32_t dba;		// Data base address
-	uint32_t dbau;		// Data base address upper 32 bits
-	uint32_t rsv0;		// Reserved
-
-	// DW3
-	uint32_t dbc:22;		// Byte count, 4M max
-	uint32_t rsv1:9;		// Reserved
-	uint32_t i:1;		// Interrupt on completion
-}  __attribute__((packed)) HBA_PRDT_ENTRY;
 
 typedef struct tagFIS_REG_H2D
 {
@@ -144,7 +146,77 @@ typedef struct tagFIS_REG_H2D
 
 	// DWORD 4
 	uint8_t  rsv1[4];	// Reserved
-}  __attribute__((packed)) FIS_REG_H2D;
+}  __attribute__((packed)) FIS_REG_H2D; //20 bytes
+
+typedef struct tagFIS_REG_D2H
+{
+	// DWORD 0
+	uint8_t  fis_type;    // FIS_TYPE_REG_D2H
+
+	uint8_t  pmport:4;    // Port multiplier
+	uint8_t  rsv0:2;      // Reserved
+	uint8_t  i:1;         // Interrupt bit
+	uint8_t  rsv1:1;      // Reserved
+
+	uint8_t  status;      // Status register
+	uint8_t  error;       // Error register
+	
+	// DWORD 1
+	uint8_t  lba0;        // LBA low register, 7:0
+	uint8_t  lba1;        // LBA mid register, 15:8
+	uint8_t  lba2;        // LBA high register, 23:16
+	uint8_t  device;      // Device register
+
+	// DWORD 2
+	uint8_t  lba3;        // LBA register, 31:24
+	uint8_t  lba4;        // LBA register, 39:32
+	uint8_t  lba5;        // LBA register, 47:40
+	uint8_t  rsv2;        // Reserved
+
+	// DWORD 3
+	uint8_t  countl;      // Count register, 7:0
+	uint8_t  counth;      // Count register, 15:8
+	uint8_t  rsv3[2];     // Reserved
+
+	// DWORD 4
+	uint8_t  rsv4[4];     // Reserved
+} __attribute__((packed)) FIS_REG_D2H;
+
+typedef volatile struct tagHBA_FIS
+{
+	// 0x00
+	uint8_t	dsfis[28];		// DMA Setup FIS (FIS_DMA_SETUP get struct def from OSDev if needed and replace here)
+	uint8_t pad0[4];
+
+	// 0x20
+	uint8_t	psfis[20];		// PIO Setup FIS (FIS_PIO_SETUP get struct def from OSDev if needed and replace here)
+	uint8_t pad1[12];
+
+	// 0x40
+	FIS_REG_D2H	rfis;		// Register – Device to Host FIS
+	uint8_t pad2[4];
+
+	// 0x58
+	uint8_t	sdbfis[8];		// Set Device Bit FIS (FIS_DEV_BITS get struct def from OSDev if needed and replace here)
+	
+	// 0x60
+	uint8_t ufis[64];
+
+	// 0xA0
+	uint8_t rsv[0x100-0xA0];
+} __attribute__((packed)) HBA_FIS;
+
+typedef enum
+{
+	FIS_TYPE_REG_H2D	= 0x27,	// Register FIS - host to device
+	FIS_TYPE_REG_D2H	= 0x34,	// Register FIS - device to host
+	FIS_TYPE_DMA_ACT	= 0x39,	// DMA activate FIS - device to host
+	FIS_TYPE_DMA_SETUP	= 0x41,	// DMA setup FIS - bidirectional
+	FIS_TYPE_DATA		= 0x46,	// Data FIS - bidirectional
+	FIS_TYPE_BIST		= 0x58,	// BIST activate FIS - bidirectional
+	FIS_TYPE_PIO_SETUP	= 0x5F,	// PIO setup FIS - device to host
+	FIS_TYPE_DEV_BITS	= 0xA1,	// Set device bits FIS - device to host
+} FIS_TYPE;
 
 typedef enum {
 	AHCI_PORT_OK,
@@ -257,9 +329,10 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	uint64_t start_ms = tsc_timer_get_ms();
 	while ((port->cmd & (0x1U << 15)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
 	if (port->cmd & (0x1U << 15)) {
-		kprintf("[AHCI] Port %u has timed out after sending DMA stop command.\n", port_num);
+		kprintf("[AHCI] Port %u: Timed out after sending DMA stop command.\n", port_num);
 		return AHCI_PORT_TIMEOUT;
 	} 
+	kprintf("[AHCI] Port %u: DMA stop success.\n", port_num);
 
 	//Then set bit 4 (FIS Receive Enable) to 0 to disable FIS receive.
 	port->cmd &= ~0x10U;
@@ -268,20 +341,21 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	start_ms = tsc_timer_get_ms();
 	while ((port->cmd & (0x1U << 14)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
 	if (port->cmd & (0x1U << 14)) {
-		kprintf("[AHCI] Port %u has timed out after sending FIS Receive disable.\n", port_num);
+		kprintf("[AHCI] Port %u: Timed out after sending FIS Receive disable.\n", port_num);
 		return AHCI_PORT_TIMEOUT;
 	} 
+	kprintf("[AHCI] Port %u: FIS Received disable success.\n", port_num);
 
 	dma_block_t port_mem = kallocate_dma(1);
 	uint64_t dma_physical_base = port_mem.physical_addr;
 
-	//We will take the first 1024 bytes for the command list. (Needs 1KB alignment, satisifed by 4KB page)
-	port->clb = (uint32_t)(dma_physical_base & 0xFFFFFFFF);
+	//We will take the first 1024 bytes for the command list. (Needs 1KB alignment, satisifed by 4KB page) After, free at 1024 into page
+	port->clb = (uint32_t)(dma_physical_base & 0xFFFFFFFFU);
 	port->clbu = (uint32_t)(dma_physical_base >> 32);
 
-	//After, we can put the FIS receive base which will take 256 bytes. (Needs 256B alignment, satisifed by 1KB into the page)
+	//After, we can put the FIS receive base which will take 256 bytes. (Needs 256B alignment, satisifed by 1KB into the page) AFter, free at 1280 into page
 	uint64_t fb64 = dma_physical_base + 1024;
-	port->fb = (uint32_t)(fb64 & 0xFFFFFFFF);
+	port->fb = (uint32_t)(fb64 & 0xFFFFFFFFU);
 	port->fbu = (uint32_t)(fb64 >> 32);
 
 	//Then, renable the FIS receive engine.
@@ -290,10 +364,12 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	//And wait again for bit 14.
 	start_ms = tsc_timer_get_ms();
 	while (!(port->cmd & (0x1U << 14)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
-	if (port->cmd & !(0x1U << 14)) {
-		kprintf("[AHCI] Port %u has timed out after sending FIS Receive enable.\n", port_num);
+	if (!(port->cmd & (0x1U << 14))) {
+		kprintf("[AHCI] Port %u: Timed out after sending FIS Receive enable.\n", port_num);
+		kfree_dma(port_mem);
 		return AHCI_PORT_TIMEOUT;
 	} 
+	kprintf("[AHCI] Port %u: FIS Received enable success.\n", port_num);
 
 	uint32_t sig = port->sig;
 	//Here, we check the port type.
@@ -313,11 +389,82 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 			break;
 	}
 
+	//Reenable the dma processing engine.
+	port->cmd |= 0x1U;
+
+	//And wait for bit 15.
+	start_ms = tsc_timer_get_ms();
+	while (!(port->cmd & (0x1U << 15)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
+	if (!(port->cmd & (0x1U << 15))) {
+		kprintf("[AHCI] Port %u: Timed out after sending FIS Receive enable.\n", port_num);
+		kfree_dma(port_mem);
+		return AHCI_PORT_TIMEOUT;
+	} 
+	kprintf("[AHCI] Port %u: FIS Received enable success.\n", port_num);
+
 	//Now, we are sure we only have a SATA HDD/SSD.
 	//Clear the potential interrupts and/or errors.
-	port->serr = 0xffffffff;
-	port->is = 0xffffffff;
+	port->serr = 0xffffffffU;
+	port->is = 0xffffffffU;
 
 	//For now, initialize only command header 0. 
-	//Set command header 0 to 
+	//Set command header 0 to point to the same page for now.
+	volatile HBA_CMD_HEADER *hdr0 = (volatile HBA_CMD_HEADER*)port_mem.virtual_addr;
+	
+	//We can set the table to be after the receive FIS in the DMA page (128-byte alligned). We start at 1280 and next free is at 1424 (size 144B).
+	uint64_t ctbap = port_mem.physical_addr + 1280;
+	hdr0->ctba = (uint32_t)(ctbap & 0xffffffffU);
+	hdr0->ctbau = (uint32_t)(ctbap >> 32);
+	volatile HBA_CMD_TBL *cmdtbl = (volatile HBA_CMD_TBL*)(port_mem.virtual_addr + 1280);
+	
+	//Now, we wwrite an IDENTIFY DEVICE request to the drive.
+	//Wipe the cmd_tbl to get a clean slate.
+	volatile_memset(cmdtbl, 0, sizeof(HBA_CMD_TBL));
+
+	//We get the fis and prdt to be written.
+	volatile FIS_REG_H2D *fis_h2d = (volatile FIS_REG_H2D*)(&(cmdtbl->cfis));
+	volatile HBA_PRDT_ENTRY *prdt = (volatile HBA_PRDT_ENTRY*)(&cmdtbl->prdt_entry);
+
+	//Start by setting up the receiving area. For IDENTIFY DEVICE, 512 bytes are required.
+	prdt->dbc = 511; //0 based, so 512 - 1
+	//We can put the 512 bytes right after this in the page for now. Allign at 1472 to satisfy the 64-bit cache lines.
+	uint64_t dbap = port_mem.physical_addr + 1472;
+	prdt->dba = (uint32_t)(dbap & 0xffffffffU);
+	prdt->dbau = (uint32_t)(dbap >> 32);
+	uint16_t *id_data = (uint16_t*)(port_mem.virtual_addr + 1472);
+
+	//Create the FIS H2D.
+	fis_h2d->fis_type = FIS_TYPE_REG_H2D;
+	fis_h2d->c = 1;
+	fis_h2d->command = 0xEC;
+
+	//Configuyre our header.
+	hdr0->cfl = 5;
+	hdr0->w = 0;
+	hdr0->prdtl = 1;
+	hdr0->prdbc = 0; //Reset count
+
+	//Fire the command.
+	port->ci |= 1U;
+
+	//Wait for the bit to clear.
+	start_ms = tsc_timer_get_ms();
+	while ((port->ci & 0x1U) && (tsc_timer_get_ms() - start_ms < 10000)) 
+	{
+		//Task File Error Check [1]
+		if (port->tfd & 0x01) { 
+			kprintf("[AHCI] Identify Device command rejected by disk status engine!\n");
+			kfree_dma(port_mem);
+			return AHCI_PORT_TIMEOUT;
+    	}
+		tsc_sleep_ms(1);
+	}
+	if (port->ci & 0x1U) {
+		kprintf("[AHCI] Port %u has timed out after sending IDENTIFY DEVICE.\n", port_num);
+		kfree_dma(port_mem);
+		return AHCI_PORT_TIMEOUT;
+	} 
+
+	//Response should have been received.
+	kprintf("[AHCI] Success!\n");
 }

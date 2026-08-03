@@ -171,3 +171,42 @@ void *memset(void *start, uint8_t pattern, size_t size) {
 
     return start;
 }
+
+/**
+ * @brief Sets the volatile memory at location 'start' to pattern 'pattern' over 'size' bytes.
+ * @param start A pointer to starting volatile memory location.
+ * @param pattern The byte-pattern to repeat throughout the memory area.
+ * @param size The size in bytes of the memory area.
+ * @return The same pointer passed into start.
+ */
+void *volatile_memset(volatile void *start, uint8_t pattern, size_t size) {
+    //This fuction will attempt to write the pattern in stacks of 64 bits for most efficiency in C.
+    //We however need to start by applying the pattern to the head until we reach 8-byte alignment.
+    volatile uint8_t *ptr8 = (uint8_t*)start;
+    while (((uint64_t)ptr8 & 0x7) && 0 < size) {
+        *ptr8++ = pattern;
+        size--;
+    }
+
+    //Now, we handle the middle portion, which is the faster 64-bit writes.
+    uint64_t pattern64 = (uint64_t)pattern;
+    pattern64 |= pattern64 << 8;
+    pattern64 |= pattern64 << 16;
+    pattern64 |= pattern64 << 32;
+
+    //The pointer should be alligned now.
+    volatile uint64_t *ptr64 = (uint64_t*)ptr8;
+    while (size >= 8) {
+        *ptr64++ = pattern64;
+        size -= 8;
+    }
+
+    //Lastly, handle the tail, if unaligned.
+    ptr8 = (volatile uint8_t*)ptr64;
+    while (size > 0) {
+        *ptr8++ = pattern;
+        size--;
+    }
+
+    return start;
+}

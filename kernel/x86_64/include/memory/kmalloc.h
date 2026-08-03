@@ -44,5 +44,5 @@ void *kmalloc(size_t size);
 void kfree(void *ptr);
 void *kmap_mmio(uint64_t physical_address, size_t size, mmio_flags_t mmio_flag);
 dma_block_t kallocate_dma(size_t page_count);
-void kunmap_mmio(void *virtual_address, size_t size);
+void kunmap_mmio(void *virtual_address);
 void kfree_dma(dma_block_t block);
