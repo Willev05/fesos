@@ -454,14 +454,14 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	{
 		//Task File Error Check [1]
 		if (port->tfd & 0x01) { 
-			kprintf("[AHCI] Identify Device command rejected by disk status engine!\n");
+			kprintf("[AHCI] Port %u: Identify Device command rejected by disk status engine!\n", port_num);
 			kfree_dma(port_mem);
 			return AHCI_PORT_TIMEOUT;
     	}
 		tsc_sleep_ms(1);
 	}
 	if (port->ci & 0x1U) {
-		kprintf("[AHCI] Port %u has timed out after sending IDENTIFY DEVICE.\n", port_num);
+		kprintf("[AHCI] Port %u: Timed out after sending IDENTIFY DEVICE.\n", port_num);
 		kfree_dma(port_mem);
 		return AHCI_PORT_TIMEOUT;
 	} 
