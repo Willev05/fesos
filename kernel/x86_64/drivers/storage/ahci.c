@@ -10,6 +10,7 @@
 #include "../../include/kernel/errno.h"
 #include "../../include/common/printf.h"
 #include "../../include/common/stdstr.h"
+#include "../../include/drivers/block/lbd.h"
 
 typedef volatile struct tagHBA_PORT
 {
@@ -206,6 +207,17 @@ typedef volatile struct tagHBA_FIS
 	uint8_t rsv[0x100-0xA0];
 } __attribute__((packed)) HBA_FIS;
 
+typedef struct {
+	HBA_MEM *hba_mmio;
+	HBA_PORT *port_mmio;
+	dma_block_t control_dma;
+	uint8_t port_num;
+	
+	//Future when I need to allocate new DMAs for command tables.
+	void *dma_pool;
+	uint32_t dma_pool_count;
+} ahci_driver_data_t;
+
 typedef enum
 {
 	FIS_TYPE_REG_H2D	= 0x27,	// Register FIS - host to device
@@ -224,10 +236,16 @@ typedef enum {
 	AHCI_PORT_NOT_IMPLEMENTED
 } ahci_port_return_t;
 
-static int ahci_read(void *driver_data, uint64_t lba, uint64_t count, void *buffer);
-static int ahci_write(void *driver_data, uint64_t lba, uint64_t count, const void *buffer);
+static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, void *buffer);
+static int ahci_write(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, const void *buffer);
 static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba);
 static void ahci_parse_model_string(uint16_t *id_data);
+
+static const lbd_driver_api_t ahci_api = {
+	.read = ahci_read,
+	.write = ahci_write,
+	.flush = NULL
+};
 
 int ahci_init_device(pci_device_t *pci_device) {
 	kprintf("[AHCI] Found controller at bus %lu, device %lu, function %lu.\n", pci_device->bus, pci_device->device, pci_device->function);
@@ -511,10 +529,62 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 		}
 	}
 
+	//If write cache, we need to flush after inportant file operations.
+	uint8_t write_cache = 0;
+	if ((id_data[85] & (1 << 5)) && ((id_data[83] & 0xC000) == 0x4000)) write_cache = 1;
+
+	uint16_t sector_offset = 0;
+	//If not equal, then there could be an offset (LBA0 is not the first logical sector of physical block 0).
+	if (physical_sector_size != logical_sector_size) {
+		if ((id_data[209] & 0xC000) == 0x4000) {
+			sector_offset = id_data[209] & 0x3FFF;
+		}
+	}
+
 	kprintf("[AHCI] Port %u: Logical sector size: %u\n", port_num, logical_sector_size);
 	kprintf("[AHCI] Port %u: Physical sector size: %u\n", port_num, physical_sector_size);
 	kprintf("[AHCI] Port %u: lba-48bit support: %u\n", port_num, lba48_support);
 	kprintf("[AHCI] Port %u: Total number of user addressable sectors: %lu\n", port_num, sector_count);
+	kprintf("[AHCI] Port %u: Volatile write cache enabled: %lu\n", port_num, write_cache);
+	kprintf("[AHCI] Port %u: Logical alignment offset: %lu\n", port_num, sector_offset);
+
+	//Now, we can prepare a struct to pass to the lbd.
+	lbd_logical_drive_t *drive = (lbd_logical_drive_t*)kmalloc(sizeof(lbd_logical_drive_t));
+
+	drive->driver_api = &ahci_api;
+
+	drive->device_info.total_sectors = sector_count;
+	drive->device_info.logical_sector_size_bytes = logical_sector_size;
+	drive->device_info.physical_sector_size_bytes = physical_sector_size;
+	drive->device_info.logical_alignment_offset = sector_offset;
+	drive->device_info.max_sectors_per_transfer = 128;
+	drive->device_info.flags = LBD_FLAG_W;
+	if (write_cache) drive->device_info.flags |= LBD_FLAG_F;
+
+	ahci_driver_data_t *driver_data = (ahci_driver_data_t*)kmalloc(sizeof(ahci_driver_data_t));
+	driver_data->hba_mmio = hba;
+	driver_data->port_mmio = port;
+	driver_data->control_dma = port_mem;
+	driver_data->port_num = port_num;
+	driver_data->dma_pool = NULL;
+	driver_data->dma_pool_count = 0;
+	drive->driver_data = (void*)driver_data;
+
+	char *raw_bytes = (char*)id_data;
+	for (uint8_t i = 0; i < 40; i++) {
+		drive->drive_name[i] = raw_bytes[54 + i];
+	}
+
+	lbd_register_drive(drive);
+	return 0;
+}
+
+static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, void *buffer) {
+	return -EPERM;
+}
+
+static int ahci_write(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, const void *buffer) {
+	return -EPERM;
 }
 
 //Due to ATA returning in word-size registers. This means "AB" stored in a reg to become "BA" due to CPU low-endian.
