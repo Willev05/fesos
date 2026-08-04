@@ -6,6 +6,7 @@
 #include "../include/memory/pmm.h"
 #include "../include/common/math.h"
 #include "../include/common/stdtypes.h"
+#include "../include/common/printf.h"
 
 #define MINIMUM_AVAILABLE_NODES 5
 
@@ -34,6 +35,9 @@ vm_ds_node *vm_ds_bubble_update_and_balance(vm_ds_node *node);
 vm_ds_node *vm_ds_remove(vm_ds_node *root, vm_ds_node *node_to_remove);
 vm_ds_node *vm_ds_get_node(vm_ds_node *root, uint64_t addr);
 vm_ds_node *vm_ds_find_worst_fit(vm_ds_node *root, uint64_t size);
+vm_ds_node *vm_ds_get_predecessor(vm_ds_node *node);
+vm_ds_node *vm_ds_get_successor(vm_ds_node *node);
+static void vma_print_tree(vm_ds_node *root);
 
 uint8_t vma_demand_paging(uint64_t fault_addr, uint8_t is_user) {
     //We start by checking if it is user or supervisor that triggered this to search the peoper tree.
@@ -110,6 +114,10 @@ void *vma_allocate_memory_from_utree(uint64_t size, vm_node_type allocation_type
 }
 
 void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
+    //DEBUG
+    //kprintf("\nTree before allocation:\n");
+    //vma_print_tree(*root);
+    
     //allocation_backing will be copied over, node will NOT point to the specific allocation_backing passed in. NULL can be passed when allocating normal memory.
     if (allocation_type == VMA_FREE) return NULL;
     //We need to locate the worst fit for this request.
@@ -151,11 +159,18 @@ void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_ty
         node_for_request->backing.file.file_ptr = allocation_backing->file.file_ptr;
         node_for_request->backing.file.offset = allocation_backing->file.file_ptr;
     }
+    //DEBUG
+    //kprintf("\nTree after allocation:\n");
+    //vma_print_tree(*root);
 
     return (void *)node_for_request->start_addr;
 }
 
 void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
+    //DEBUG
+    //kprintf("\nTree before free:\n");
+    //vma_print_tree(*root);
+
     //We first need to find this node from the tree. It needs to be the start_address of the requested block.
     vm_ds_node *node_to_free = vm_ds_get_node(*root, start_addr);
 
@@ -176,10 +191,8 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     }
 
     //Now, we need to check to see if the successor and/or predecessor are also "free" to coalesce them.
-    vm_ds_node *successor = node_to_free->right;
-    while (node_to_free->right && successor->left) successor = successor->left;
-    vm_ds_node *predecessor = node_to_free->left;
-    while (node_to_free->left && predecessor->right) predecessor = predecessor->right;
+    vm_ds_node *successor = vm_ds_get_successor(node_to_free);
+    vm_ds_node *predecessor = vm_ds_get_predecessor(node_to_free);
 
     //Now, we have three cases:
     //Case 1: Both pre/suc are free
@@ -238,6 +251,9 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
         //We just mark the node as free.
         node_to_free->type = VMA_FREE;
     }
+    //DEBUG
+    //kprintf("\nTree after free:\n");
+    //vma_print_tree(*root);
 }
 
 void replenish_slab_from_tree() {
@@ -480,8 +496,7 @@ vm_ds_node *vm_ds_remove(vm_ds_node *root, vm_ds_node *node_to_remove) {
     else if (node_to_remove->left && node_to_remove->right) {
         //Complicated one. We need to replace this node with its inorder successor. (Smallest node in right subtree)
         //So, lets start by finding this successor:
-        vm_ds_node *victim_node = node_to_remove->right;
-        while (victim_node->left) victim_node = victim_node->left;
+        vm_ds_node *victim_node = vm_ds_get_successor(node_to_remove);
 
         //Now, we have the victim. This node itself will have to be "deleted" from the tree. It will then be manually added back here.
         //This wont be a infinite recursive loop since the successor will not have a left child.
@@ -524,4 +539,72 @@ vm_ds_node *vm_ds_find_worst_fit(vm_ds_node *root, uint64_t size) {
 
     //A return in case the tree is broken or something.
     return NULL;
+}
+
+vm_ds_node *vm_ds_get_predecessor(vm_ds_node *node) {
+    vm_ds_node *predecessor = NULL;
+
+    if (node->left != NULL) {
+        //Case A: If there is a left child, go left once, then all the way right
+        predecessor = node->left;
+        while (predecessor->right != NULL) {
+            predecessor = predecessor->right;
+        }
+    } else {
+        //Case B: No left child. Walk up the parent chain until you find that the subtree we came from was parent's right child.
+        vm_ds_node *curr = node;
+        vm_ds_node *p = node->parent;
+        while (p != NULL && curr == p->left) {
+            curr = p;
+            p = p->parent;
+        }
+        predecessor = p;
+    }
+
+    return predecessor;
+}
+
+
+vm_ds_node *vm_ds_get_successor(vm_ds_node *node) {
+    vm_ds_node *successor = NULL;
+
+    if (node->right != NULL) {
+        //Case A: If there is a right child, go right once, then all the way left
+        successor = node->right;
+        while (successor->left != NULL) {
+            successor = successor->left;
+        }
+    } else {
+        // Case B: No right child. Walk up the parent chain until you find that the subtree we came from was parent's left child.
+        vm_ds_node *curr = node;
+        vm_ds_node *p = node->parent;
+        while (p != NULL && curr == p->right) {
+            curr = p;
+            p = p->parent;
+        }
+        successor = p;
+    }
+
+    return successor;
+}
+
+static void vma_print_tree(vm_ds_node *root) {
+    //Start with left child.
+    if (root->left) vma_print_tree(root->left);
+
+    //Now, we do the root itself.
+    kprintf("\nNext Node!\n");
+    kprintf("Node address: %lx\n", (uint64_t)root);
+    kprintf("Node parent: %lx\n", (uint64_t)root->parent);
+    kprintf("Node left: %lx\n", (uint64_t)root->left);
+    kprintf("Node right: %lx\n", (uint64_t)root->right);
+    kprintf("Start_address: %lx\n", root->start_addr);
+    kprintf("Size: %lx\n", root->size);
+    kprintf("Type: %u\n", root->type);
+    kprintf("Flags: %lx\n", root->flags);
+    kprintf("Max free slot subtree: %lx\n", root->subtree_max_free_slot);
+    kprintf("Max depth subtree: %lx\n", root->subtree_max_depth);
+
+    //Then right child.
+    if (root->right) vma_print_tree(root->right);
 }

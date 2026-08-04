@@ -233,6 +233,8 @@ static void allocate_page_for_bucket(uint8_t bucket_id) {
     //We need to get a page and set it up for use in the bucket.
     kmalloc_page_descriptor_t *new_page = vma_allocate_memory_from_ktree(4096, VMA_REGULAR, PT_WRITEABLE | PT_NX | PT_GLOBAL, NULL);
     new_page->total_blocks = (4096 - MAX(buckets[bucket_id].bucket_size, sizeof(kmalloc_page_descriptor_t))) / buckets[bucket_id].bucket_size; //This ONLY works since size is 32, which handles 16 bytes perfectly. Then, the bucket size sets itself up perfectly after.
+    new_page->blocks_in_use = 0;
+    new_page->bucket_index = bucket_id;
 
     //Now, we need to map the free_list. We can start at the proper offset right after the page header.
     uint64_t current_free_hole = (uint64_t)(new_page) + MAX(buckets[bucket_id].bucket_size, sizeof(kmalloc_page_descriptor_t));
