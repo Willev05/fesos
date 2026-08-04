@@ -227,6 +227,7 @@ typedef enum {
 static int ahci_read(void *driver_data, uint64_t lba, uint64_t count, void *buffer);
 static int ahci_write(void *driver_data, uint64_t lba, uint64_t count, const void *buffer);
 static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba);
+static void ahci_parse_model_string(uint16_t *id_data);
 
 int ahci_init_device(pci_device_t *pci_device) {
 	kprintf("[AHCI] Found controller at bus %lu, device %lu, function %lu.\n", pci_device->bus, pci_device->device, pci_device->function);
@@ -396,11 +397,11 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	start_ms = tsc_timer_get_ms();
 	while (!(port->cmd & (0x1U << 15)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
 	if (!(port->cmd & (0x1U << 15))) {
-		kprintf("[AHCI] Port %u: Timed out after sending FIS Receive enable.\n", port_num);
+		kprintf("[AHCI] Port %u: Timed out after sending dma processing engine start.\n", port_num);
 		kfree_dma(port_mem);
 		return AHCI_PORT_TIMEOUT;
 	} 
-	kprintf("[AHCI] Port %u: FIS Received enable success.\n", port_num);
+	kprintf("[AHCI] Port %u: DMA processing engine started success.\n", port_num);
 
 	//Now, we are sure we only have a SATA HDD/SSD.
 	//Clear the potential interrupts and/or errors.
@@ -465,6 +466,66 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 		return AHCI_PORT_TIMEOUT;
 	} 
 
-	//Response should have been received.
-	kprintf("[AHCI] Success!\n");
+	//Need to swap the word's chars due to ATA weirdness.
+	ahci_parse_model_string(id_data);
+	char *model_string = (char*)(&id_data[27]);
+	kprintf("[AHCI] Port %u: Model Number: %s\n", port_num, model_string);
+
+	uint8_t lba48_support;
+	uint64_t sector_count;
+
+	//We wanna check 48-bit LBA support.
+	if ((id_data[83] & (1 << 10)) && ((id_data[83] & 0xC000) == 0x4000)) { //Seccond check is data integrity check. (Bit 15 = 0, bit 14 = 1)
+		//Support. We need to scour potentially 2 different reagions to get the total sector count.
+		lba48_support = 1;
+		uint32_t sector_count_lba28 = *((uint32_t*)&id_data[60]);
+		uint64_t sector_count_lba48 = *((uint64_t*)&id_data[100]);
+
+		//If the larger area contains real meaningful value, then use it.
+		if (sector_count_lba48 > 0) sector_count = sector_count_lba48;
+		//If not, fall back on the old lba28 size.
+		else sector_count = (uint64_t)sector_count_lba28;
+	}
+	else {
+		lba48_support = 0;
+		sector_count = (uint64_t)*((uint32_t*)&id_data[60]);
+	}
+
+	uint32_t logical_sector_size = 512;
+	uint32_t physical_sector_size = 512;
+	//Data integrity, if false, assume no support for this and assume 512 sector size.
+	if ((id_data[106] & 0xC000) == 0x4000) {
+		//Bit 12 represents if the logical sector size > 512 bytes.
+		if (id_data[106] & (1 << 12)) {
+			logical_sector_size = *((uint32_t*)&id_data[117]) * 2; //*2 since the size is in words originally.
+		}
+
+		//Bit 13 represents if there are more than 1 logical sector per physical sector.
+		if (id_data[106] & (1 << 13)) {
+			//Bits 0-3 hold this info as an exponent (2^n)
+			uint8_t exp = id_data[106] & 0xf;
+			physical_sector_size = logical_sector_size * (1 << exp);
+		}
+		else {
+			physical_sector_size = logical_sector_size;
+		}
+	}
+
+	kprintf("[AHCI] Port %u: Logical sector size: %u\n", port_num, logical_sector_size);
+	kprintf("[AHCI] Port %u: Physical sector size: %u\n", port_num, physical_sector_size);
+	kprintf("[AHCI] Port %u: lba-48bit support: %u\n", port_num, lba48_support);
+	kprintf("[AHCI] Port %u: Total number of user addressable sectors: %lu\n", port_num, sector_count);
+}
+
+//Due to ATA returning in word-size registers. This means "AB" stored in a reg to become "BA" due to CPU low-endian.
+static void ahci_parse_model_string(uint16_t *id_data) {
+	//We need to loop through the 27th to 46th word and swap them.
+	for (int w = 27; w <= 46; w++) {
+		uint8_t low = (uint8_t)(id_data[w] & 0xff);
+		uint8_t high = (uint8_t)(id_data[w] >> 8);
+		id_data[w] = (uint16_t)(((uint16_t)low << 8) | high);
+	}
+
+	//Replace the last character with 0s since we assume it to just be empty space.
+	id_data[46] &= 0xff;
 }
