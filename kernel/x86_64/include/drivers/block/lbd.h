@@ -31,7 +31,7 @@ typedef struct {
 } lbd_device_info_t;
 
 struct _lbd_logical_drive {
-    lbd_driver_api_t *driver_api;
+    const lbd_driver_api_t *driver_api;
     lbd_device_info_t device_info;
     void *driver_data;
     char drive_name[40];

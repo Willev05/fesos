@@ -11,5 +11,5 @@ void lbd_register_drive(lbd_logical_drive_t *logical_drive) {
     uint8_t drive_num = next_drive_num++;
     logical_drive->drive_no = drive_num;
     lbd_drives[drive_num] = logical_drive;
-    kprintf("[LBD] Registered new drive: Drive number: %u, Drive name (frokm driver): %s\n", drive_num, logical_drive->drive_name);
+    kprintf("[LBD] Registered new drive: Drive number: %u, Drive name (from driver): %s\n", drive_num, logical_drive->drive_name);
 }

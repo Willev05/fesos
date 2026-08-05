@@ -212,10 +212,9 @@ typedef struct {
 	HBA_PORT *port_mmio;
 	dma_block_t control_dma;
 	uint8_t port_num;
-	
-	//Future when I need to allocate new DMAs for command tables.
-	void *dma_pool;
-	uint32_t dma_pool_count;
+	uint8_t lba48_support;
+	//For the 32 command tables, each with space for up to 248 PRDTs!
+	dma_block_t command_tables[32];
 } ahci_driver_data_t;
 
 typedef enum
@@ -233,7 +232,8 @@ typedef enum
 typedef enum {
 	AHCI_PORT_OK,
 	AHCI_PORT_TIMEOUT,
-	AHCI_PORT_NOT_IMPLEMENTED
+	AHCI_PORT_NOT_IMPLEMENTED,
+	AHCI_PORT_OUT_OF_MEMORY
 } ahci_port_return_t;
 
 static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, void *buffer);
@@ -366,6 +366,9 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	kprintf("[AHCI] Port %u: FIS Received disable success.\n", port_num);
 
 	dma_block_t port_mem = kallocate_dma(1);
+	if (!port_mem.virtual_addr) {
+		kprintf("[AHCI] Port %u: DMA control page allocation failed. Out of memory. Cleaning up and returning...\n", port_num);
+	}
 	uint64_t dma_physical_base = port_mem.physical_addr;
 
 	//We will take the first 1024 bytes for the command list. (Needs 1KB alignment, satisifed by 4KB page) After, free at 1024 into page
@@ -426,17 +429,45 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	port->serr = 0xffffffffU;
 	port->is = 0xffffffffU;
 
-	//For now, initialize only command header 0. 
-	//Set command header 0 to point to the same page for now.
+	//Prep a driver_data struct to sotre information like our 32 command list pages.
+	ahci_driver_data_t *driver_data = (ahci_driver_data_t*)kmalloc(sizeof(ahci_driver_data_t));
+	if (!driver_data) {
+		kprintf("[AHCI] Port %u: Driver data struct alloc failed. Out of memory. Cleaning up and returning...\n", port_num);
+		kfree_dma(port_mem);
+	}
+
+	//Need to allocate 32 dma pages for the command tables and PRDTs.
+	//Simply request 32 times, no need for 32 contiguous physical pages. Removes potential issues when trying to allocate during high fragmentation of physical mem.
+	for (uint8_t i = 0; i < 32; i++) {
+		dma_block_t requested_block = kallocate_dma(1);
+		if (!requested_block.virtual_addr) {
+			kprintf("[AHCI] Port %u: Unable to allocate a page for one of the command tables! Cleaning up and exiting...\n", port_num);
+			kfree_dma(port_mem);
+			kfree(driver_data);
+			return AHCI_PORT_OUT_OF_MEMORY;
+		}
+		driver_data->command_tables[i] = requested_block;
+	}
+
+	driver_data->hba_mmio = hba;
+	driver_data->port_mmio = port;
+	driver_data->control_dma = port_mem;
+
+	//For now, initialize the command headers. 
+	for (uint8_t i = 0; i < 32; i++) {
+		volatile HBA_CMD_HEADER *cmd_header = (volatile HBA_CMD_HEADER*)(port_mem.virtual_addr + sizeof(HBA_CMD_HEADER) * i);
+
+		//Point this header to the page containing out table.
+		uint64_t cmdtblp = driver_data->command_tables[i].physical_addr;
+		cmd_header->ctba = (uint32_t)(cmdtblp & 0xffffffffU);
+		cmd_header->ctbau = (uint32_t)(cmdtblp >> 32);
+	}
+
+	//For the initial request, we will use header 0.
 	volatile HBA_CMD_HEADER *hdr0 = (volatile HBA_CMD_HEADER*)port_mem.virtual_addr;
+	volatile HBA_CMD_TBL *cmdtbl = (volatile HBA_CMD_TBL*)(driver_data->command_tables[0].virtual_addr);
 	
-	//We can set the table to be after the receive FIS in the DMA page (128-byte alligned). We start at 1280 and next free is at 1424 (size 144B).
-	uint64_t ctbap = port_mem.physical_addr + 1280;
-	hdr0->ctba = (uint32_t)(ctbap & 0xffffffffU);
-	hdr0->ctbau = (uint32_t)(ctbap >> 32);
-	volatile HBA_CMD_TBL *cmdtbl = (volatile HBA_CMD_TBL*)(port_mem.virtual_addr + 1280);
-	
-	//Now, we wwrite an IDENTIFY DEVICE request to the drive.
+	//Now, we write an IDENTIFY DEVICE request to the drive.
 	//Wipe the cmd_tbl to get a clean slate.
 	volatile_memset(cmdtbl, 0, sizeof(HBA_CMD_TBL));
 
@@ -446,11 +477,11 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 
 	//Start by setting up the receiving area. For IDENTIFY DEVICE, 512 bytes are required.
 	prdt->dbc = 511; //0 based, so 512 - 1
-	//We can put the 512 bytes right after this in the page for now. Allign at 1472 to satisfy the 64-bit cache lines.
-	uint64_t dbap = port_mem.physical_addr + 1472;
+	//We can put the 512 bytes right after the FIS receive area in the page for now. Put at 1280 which works well with cache lines (64-bit alignment).
+	uint64_t dbap = port_mem.physical_addr + 1280;
 	prdt->dba = (uint32_t)(dbap & 0xffffffffU);
 	prdt->dbau = (uint32_t)(dbap >> 32);
-	uint16_t *id_data = (uint16_t*)(port_mem.virtual_addr + 1472);
+	uint16_t *id_data = (uint16_t*)(port_mem.virtual_addr + 1280);
 
 	//Create the FIS H2D.
 	fis_h2d->fis_type = FIS_TYPE_REG_H2D;
@@ -474,6 +505,7 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 		if (port->tfd & 0x01) { 
 			kprintf("[AHCI] Port %u: Identify Device command rejected by disk status engine!\n", port_num);
 			kfree_dma(port_mem);
+			kfree(driver_data);
 			return AHCI_PORT_TIMEOUT;
     	}
 		tsc_sleep_ms(1);
@@ -481,6 +513,7 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	if (port->ci & 0x1U) {
 		kprintf("[AHCI] Port %u: Timed out after sending IDENTIFY DEVICE.\n", port_num);
 		kfree_dma(port_mem);
+		kfree(driver_data);
 		return AHCI_PORT_TIMEOUT;
 	} 
 
@@ -561,13 +594,10 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	drive->device_info.flags = LBD_FLAG_W;
 	if (write_cache) drive->device_info.flags |= LBD_FLAG_F;
 
-	ahci_driver_data_t *driver_data = (ahci_driver_data_t*)kmalloc(sizeof(ahci_driver_data_t));
-	driver_data->hba_mmio = hba;
-	driver_data->port_mmio = port;
-	driver_data->control_dma = port_mem;
+	//Fill the remainder of driver data.
 	driver_data->port_num = port_num;
-	driver_data->dma_pool = NULL;
-	driver_data->dma_pool_count = 0;
+	driver_data->lba48_support = lba48_support;
+
 	drive->driver_data = (void*)driver_data;
 
 	char *raw_bytes = (char*)id_data;
@@ -580,7 +610,27 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 }
 
 static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, void *buffer) {
-	return -EPERM;
+	ahci_driver_data_t *driver_data = (ahci_driver_data_t*)(logical_drive->driver_data);
+	HBA_MEM *hba = driver_data->hba_mmio;
+	HBA_PORT *port = driver_data->port_mmio;
+	dma_block_t control_dma = driver_data->control_dma;
+
+	volatile HBA_CMD_HEADER *command_header = (volatile HBA_CMD_HEADER*)control_dma.virtual_addr;
+	volatile HBA_CMD_TBL *cmdtbl = (volatile HBA_CMD_TBL*)(control_dma.virtual_addr + 1280);
+	volatile FIS_REG_H2D *fis = (volatile FIS_REG_H2D*)(&cmdtbl->cfis);
+	volatile HBA_PRDT_ENTRY *prdt = (volatile HBA_PRDT_ENTRY*)(&cmdtbl->prdt_entry);
+
+	//Prepare our header
+	command_header->cfl = 5;
+	command_header->w = 0;
+	command_header->prdtl = 1;
+	command_header->prdbc = 0;
+
+	//Prepare the PRDT
+	prdt->dbc = (count * logical_drive->device_info.total_sectors);
+
+	//Check to see if we have the lba 48 support.
+
 }
 
 static int ahci_write(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, const void *buffer) {
