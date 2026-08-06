@@ -11,6 +11,8 @@
 #include "../../include/common/printf.h"
 #include "../../include/common/stdstr.h"
 #include "../../include/drivers/block/lbd.h"
+#include "../../include/common/math.h"
+#include "../../include/memory/memory.h"
 
 typedef volatile struct tagHBA_PORT
 {
@@ -618,7 +620,51 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 	volatile HBA_CMD_HEADER *command_header = (volatile HBA_CMD_HEADER*)control_dma.virtual_addr;
 	volatile HBA_CMD_TBL *cmdtbl = (volatile HBA_CMD_TBL*)(control_dma.virtual_addr + 1280);
 	volatile FIS_REG_H2D *fis = (volatile FIS_REG_H2D*)(&cmdtbl->cfis);
-	volatile HBA_PRDT_ENTRY *prdt = (volatile HBA_PRDT_ENTRY*)(&cmdtbl->prdt_entry);
+	volatile HBA_PRDT_ENTRY *prdt_base = (volatile HBA_PRDT_ENTRY*)(&cmdtbl->prdt_entry);
+
+	//Clear the command table and fist PRDT.
+	volatile_memset(cmdtbl, 0, sizeof(HBA_CMD_TBL));
+
+	//Prepare the PRDTs.
+	//First we check the beggining. See how much of the request can be fit in the first page.
+	uint64_t count_bytes = count * logical_drive->device_info.logical_sector_size_bytes;
+	uint64_t buffer_vaddr = (uint64_t)buffer;
+	uint64_t offset = buffer_vaddr & 0xFFF;
+
+	uint64_t contiguous_bytes = MIN(0x1000 - offset, count_bytes);
+	uint64_t contiguous_physical_address = vmm_get_physical_from_virtual(buffer_vaddr);
+	uint64_t remaining_bytes = count_bytes - contiguous_bytes;
+	uint64_t current_virtual_address = (buffer_vaddr + 0xFFF) & ~0xFFFULL;
+	uint64_t previous_physical_address = contiguous_physical_address & ~0xFFFULL;
+	uint16_t current_prdt_index = 0;
+
+	//The main loop, will try to bunch as many contiguuous pages in a single PRDT.
+	while (remaining_bytes > 0) {
+		uint64_t current_physical_address = vmm_get_physical_from_virtual(current_virtual_address);
+		if (current_physical_address != 0x1000 + previous_physical_address) {
+			//Then we need to flush the previous PRDT.
+			volatile HBA_PRDT_ENTRY *current_prdt = prdt_base + current_prdt_index;
+			current_prdt->i = 0;
+			current_prdt->dbc = contiguous_bytes - 1;
+			current_prdt->dba = (uint32_t)(contiguous_physical_address & 0xFFFFFFFFU);
+			current_prdt->dbau = (uint32_t)(contiguous_physical_address >> 32);
+			current_prdt_index++;
+			contiguous_bytes = 0; 
+			contiguous_physical_address = current_physical_address;
+		}
+		
+		contiguous_bytes += MIN(0x1000, remaining_bytes);
+		remaining_bytes -= MIN(0x1000, remaining_bytes);
+		current_virtual_address += 0x1000;
+		previous_physical_address = current_physical_address;
+	} 
+
+	//Flush the final table.
+	volatile HBA_PRDT_ENTRY *current_prdt = prdt_base + current_prdt_index;
+	current_prdt->i = 0;
+	current_prdt->dbc = contiguous_bytes - 1;
+	current_prdt->dba = (uint32_t)(contiguous_physical_address & 0xFFFFFFFFU);
+	current_prdt->dbau = (uint32_t)(contiguous_physical_address >> 32);
 
 	//Prepare our header
 	command_header->cfl = 5;
@@ -627,7 +673,7 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 	command_header->prdbc = 0;
 
 	//Prepare the PRDT
-	prdt->dbc = (count * logical_drive->device_info.total_sectors);
+	prdt->dbc = (count * logical_drive->device_info.total_sectors) - 1;
 
 	//Check to see if we have the lba 48 support.
 
