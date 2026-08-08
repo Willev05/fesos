@@ -4,6 +4,7 @@
 #pragma once
 #include <stdint.h>
 #include "../kernel/isr.h"
+#include "../common/stdtypes.h"
 
 #define KERNEL_STACK_PAGE_COUNT 8
 
@@ -78,3 +79,5 @@ int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags);
 int vmm_unmap(uint64_t v_addr, uint64_t pages);
 uint64_t vmm_get_physical_from_virtual(uint64_t v_addr);
 void vmm_page_fault_callback(interrupt_frame *iframe);
+page_table_entry *vmm_get_pte(uint64_t v_addr);
+int vmm_pin_pages(uint64_t v_addr, size_t count, uint8_t write_access);

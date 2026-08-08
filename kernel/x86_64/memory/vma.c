@@ -39,10 +39,10 @@ vm_ds_node *vm_ds_get_predecessor(vm_ds_node *node);
 vm_ds_node *vm_ds_get_successor(vm_ds_node *node);
 static void vma_print_tree(vm_ds_node *root);
 
-uint8_t vma_demand_paging(uint64_t fault_addr, uint8_t is_user) {
+uint8_t vma_demand_paging(uint64_t fault_addr) {
     //We start by checking if it is user or supervisor that triggered this to search the peoper tree.
     vm_ds_node *node_for_address;
-    if (is_user) node_for_address = NULL; //TODO: Implement when userland exists.
+    if (fault_addr <= 0x00007FFFFFFFFFFF) node_for_address = NULL; //TODO: Implement when userland exists.
     else node_for_address = vm_ds_get_node(kernel_vma_heap_tree_root, fault_addr); //Only kernel heap is tracked by VMA and has demand paging.
 
     if (!node_for_address) return 1; //Return error that the address is in fact invalid.
