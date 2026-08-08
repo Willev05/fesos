@@ -117,7 +117,7 @@ uint64_t vmm_get_physical_from_virtual(uint64_t v_addr) {
 
     uint64_t PT_index = (v_addr >> 12) & 0x1FF;
 
-    return (PT->entries[PT_index].bits.physical_address << 12) + v_addr & 0xFFF;
+    return (PT->entries[PT_index].bits.physical_address << 12) + (v_addr & 0xFFF);
 }
 
 void vmm_page_fault_callback(interrupt_frame *iframe) {

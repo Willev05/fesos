@@ -39,3 +39,4 @@ struct _lbd_logical_drive {
 };
 
 void lbd_register_drive(lbd_logical_drive_t *logical_drive);
+int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer);

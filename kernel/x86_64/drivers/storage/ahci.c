@@ -626,45 +626,60 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 	volatile_memset(cmdtbl, 0, sizeof(HBA_CMD_TBL));
 
 	//Prepare the PRDTs.
-	//First we check the beggining. See how much of the request can be fit in the first page.
-	uint64_t count_bytes = count * logical_drive->device_info.logical_sector_size_bytes;
-	uint64_t buffer_vaddr = (uint64_t)buffer;
-	uint64_t offset = buffer_vaddr & 0xFFF;
+	//Calculate total transfer size
+	uint64_t remaining_bytes = count * logical_drive->device_info.logical_sector_size_bytes;
+	uint64_t current_vaddr = (uint64_t)buffer;
 
-	uint64_t contiguous_bytes = MIN(0x1000 - offset, count_bytes);
-	uint64_t contiguous_physical_address = vmm_get_physical_from_virtual(buffer_vaddr);
-	uint64_t remaining_bytes = count_bytes - contiguous_bytes;
-	uint64_t current_virtual_address = (buffer_vaddr + 0xFFF) & ~0xFFFULL;
-	uint64_t previous_physical_address = contiguous_physical_address & ~0xFFFULL;
-	uint16_t current_prdt_index = 0;
+	uint16_t prdt_index = 0;
 
-	//The main loop, will try to bunch as many contiguuous pages in a single PRDT.
+	uint64_t chunk_phys_start = 0;
+	uint64_t chunk_bytes = 0;
+	uint64_t last_phys_end = 0;
+
 	while (remaining_bytes > 0) {
-		uint64_t current_physical_address = vmm_get_physical_from_virtual(current_virtual_address);
-		if (current_physical_address != 0x1000 + previous_physical_address) {
-			//Then we need to flush the previous PRDT.
-			volatile HBA_PRDT_ENTRY *current_prdt = prdt_base + current_prdt_index;
-			current_prdt->i = 0;
-			current_prdt->dbc = contiguous_bytes - 1;
-			current_prdt->dba = (uint32_t)(contiguous_physical_address & 0xFFFFFFFFU);
-			current_prdt->dbau = (uint32_t)(contiguous_physical_address >> 32);
-			current_prdt_index++;
-			contiguous_bytes = 0; 
-			contiguous_physical_address = current_physical_address;
-		}
-		
-		contiguous_bytes += MIN(0x1000, remaining_bytes);
-		remaining_bytes -= MIN(0x1000, remaining_bytes);
-		current_virtual_address += 0x1000;
-		previous_physical_address = current_physical_address;
-	} 
+		uint64_t page_offset = current_vaddr & 0xFFFU;
+		uint64_t bytes_to_page_end = 0x1000U - page_offset;
+		uint64_t bytes_this_step = MIN(bytes_to_page_end, remaining_bytes);
 
-	//Flush the final table.
-	volatile HBA_PRDT_ENTRY *current_prdt = prdt_base + current_prdt_index;
-	current_prdt->i = 0;
-	current_prdt->dbc = contiguous_bytes - 1;
-	current_prdt->dba = (uint32_t)(contiguous_physical_address & 0xFFFFFFFFU);
-	current_prdt->dbau = (uint32_t)(contiguous_physical_address >> 32);
+		uint64_t current_paddr = vmm_get_physical_from_virtual(current_vaddr);
+
+		//Check if we must flush the active PRDT entry. Happens if no contiguous between chunks.
+		if ((chunk_bytes == 0) || (current_paddr != last_phys_end)) {
+			//Flush previous chunk to PRDT if one exists
+			if (chunk_bytes > 0) {
+				volatile HBA_PRDT_ENTRY *prdt = prdt_base + prdt_index;
+				prdt->dba = (uint32_t)(chunk_phys_start & 0xFFFFFFFFU);
+				prdt->dbau = (uint32_t)(chunk_phys_start >> 32);
+				prdt->dbc = (uint32_t)(chunk_bytes - 1);
+				prdt->i = 0;
+				
+				prdt_index++;
+			}
+
+			//Start a new PRDT chunk
+			chunk_phys_start = current_paddr;
+			chunk_bytes = 0;
+		}
+
+		//Accumulate chunk
+		chunk_bytes += bytes_this_step;
+		last_phys_end = current_paddr + bytes_this_step;
+
+		//Advance virtual state
+		current_vaddr += bytes_this_step;
+		remaining_bytes -= bytes_this_step;
+	}
+
+	//Flush final trailing PRDT chunk
+	if (chunk_bytes > 0) {
+		volatile HBA_PRDT_ENTRY *prdt = prdt_base + prdt_index;
+		prdt->dba = (uint32_t)(chunk_phys_start & 0xFFFFFFFFU);
+		prdt->dbau = (uint32_t)(chunk_phys_start >> 32);
+		prdt->dbc = (uint32_t)(chunk_bytes - 1);
+		prdt->i = 0;
+
+		prdt_index++;
+	}
 
 	//Prepare our header
 	command_header->cfl = 5;
@@ -672,11 +687,59 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 	command_header->prdtl = 1;
 	command_header->prdbc = 0;
 
-	//Prepare the PRDT
-	prdt->dbc = (count * logical_drive->device_info.total_sectors) - 1;
+	//Prep the FIS
+	fis->fis_type = FIS_TYPE_REG_H2D;
+	fis->c = 1;
+
 
 	//Check to see if we have the lba 48 support.
+	if (driver_data->lba48_support) {
+		fis->command = 0x25;
+		fis->countl = (uint8_t)(count & 0xFF);
+		fis->counth = (uint8_t)((count >> 8) & 0xFF);
 
+		//Now the new address
+		fis->lba0 = (uint8_t)(lba & 0xFF); //8 bits
+		fis->lba1 = (uint8_t)((lba >> 8) & 0xFF); //16 bits
+		fis->lba2 = (uint8_t)((lba >> 16) & 0xFF); //24 bits
+		fis->lba3 = (uint8_t)((lba >> 24) & 0xFF); //32 bits
+		fis->lba4 = (uint8_t)((lba >> 32) & 0xFF); //40 bits
+		fis->lba5 = (uint8_t)((lba >> 40) & 0xFF); //48 bits
+		fis->device = (1 << 6);
+	} 
+	else {
+		//Use legacy 28-bit read dma and fis structure
+		fis->command = 0xC8;
+		fis->countl = (uint8_t)(count & 0xFF); //256 sectors = 0x00
+
+		//Now, the old address
+		fis->lba0 = (uint8_t)(lba & 0xFF); //8 bits
+		fis->lba1 = (uint8_t)((lba >> 8) & 0xFF); //16 bits
+		fis->lba2 = (uint8_t)((lba >> 16) & 0xFF); //24 bits
+		fis->device = (uint8_t)((lba >> 24) & 0xF); //28 bits, highest 4 bits if lba goes in bottom 4 bits of device (0-3)
+		fis->device |= (1 << 6);
+	}
+
+	//Fire the command.
+	port->ci |= 1U;
+
+	//Wait for the bit to clear.
+	uint64_t start_ms = tsc_timer_get_ms();
+	while ((port->ci & 0x1U) && (tsc_timer_get_ms() - start_ms < 10000)) 
+	{
+		//Task File Error Check [1]
+		if (port->tfd & 0x01) { 
+			kprintf("[AHCI] Port %u: Read command rejected by disk status engine!\n", driver_data->port_num);
+			return -EIO;
+    	}
+		tsc_sleep_ms(1);
+	}
+	if (port->ci & 0x1U) {
+		kprintf("[AHCI] Port %u: Timed out after sending IDENTIFY DEVICE.\n", driver_data->port_num);
+		return -EIO;
+	} 
+
+	return 0;
 }
 
 static int ahci_write(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, const void *buffer) {
