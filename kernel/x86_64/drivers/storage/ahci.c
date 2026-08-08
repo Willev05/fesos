@@ -735,9 +735,11 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 		tsc_sleep_ms(1);
 	}
 	if (port->ci & 0x1U) {
-		kprintf("[AHCI] Port %u: Timed out after sending IDENTIFY DEVICE.\n", driver_data->port_num);
+		kprintf("[AHCI] Port %u: Timed out after sending read request.\n", driver_data->port_num);
 		return -EIO;
 	} 
+
+	__asm__ volatile ("lfence" ::: "memory");
 
 	return 0;
 }

@@ -5,3 +5,4 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "vma.h"
+#include "kmalloc.h"
