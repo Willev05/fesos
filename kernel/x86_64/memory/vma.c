@@ -46,7 +46,7 @@ uint8_t vma_demand_paging(uint64_t fault_addr) {
     else node_for_address = vm_ds_get_node(kernel_vma_heap_tree_root, fault_addr); //Only kernel heap is tracked by VMA and has demand paging.
 
     if (!node_for_address) return 1; //Return error that the address is in fact invalid.
-    if (node_for_address->type == VMA_FREE) return 1; //Also return error if the address is still marked as free.
+    if (node_for_address->type != VMA_REGULAR) return 1; //Also return error if the address is not of demand paging type.
     //TODO: Handle file-backed memory.
     //We handle the conventional memory here.
     //We then need to allocate a frame for this.
@@ -102,7 +102,11 @@ void vma_free_memory_from_utree(uint64_t start_addr) {
 }
 
 void *vma_allocate_memory_from_ktree(uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
-    //We allocate to the heap tree unless it is an MMIO request.
+
+    //We allocate to the heap tree unless it is an MMIO request. When unmanaged, the kernel trees are either MMIO tree or HEAP.
+    if (allocation_type == VMA_UNMANAGED_MAPPING && allocation_backing->unmanaged.tree == VMA_TREE_KMMIO) {
+        return vma_allocate_memory_from_tree(&kernel_vma_mmio_tree_root, size, allocation_type, flags, allocation_backing);
+    }
     if (allocation_type == VMA_HARDWARE_MMIO) {
         return vma_allocate_memory_from_tree(&kernel_vma_mmio_tree_root, size, allocation_type, flags, allocation_backing);
     }
@@ -159,6 +163,10 @@ void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_ty
         node_for_request->backing.file.file_ptr = allocation_backing->file.file_ptr;
         node_for_request->backing.file.offset = allocation_backing->file.file_ptr;
     }
+    else if (allocation_type == VMA_UNMANAGED_MAPPING) {
+        //In unmanaged, the VMA will do nothing else and simply hold the address.
+        node_for_request->backing.unmanaged.tree = allocation_backing->unmanaged.tree;
+    }
     //DEBUG
     //kprintf("\nTree after allocation:\n");
     //vma_print_tree(*root);
@@ -189,6 +197,7 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
         //Then unmap!
         vmm_unmap(node_to_free->start_addr, node_to_free->size / 4096);
     }
+    //UNMANAGED will not require processing by the VMA. It should only reclaim the virtual memory space.
 
     //Now, we need to check to see if the successor and/or predecessor are also "free" to coalesce them.
     vm_ds_node *successor = vm_ds_get_successor(node_to_free);

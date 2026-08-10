@@ -10,18 +10,29 @@ typedef enum {
     VMA_FREE,
     VMA_REGULAR,
     VMA_FILE_BACKED,
-    VMA_HARDWARE_MMIO
+    VMA_HARDWARE_MMIO,
+    VMA_UNMANAGED_MAPPING
 } __attribute__((packed)) vm_node_type;
+
+typedef enum {
+    VMA_TREE_KHEAP,
+    VMA_TREE_KMMIO,
+    VMA_TREE_USER
+} vma_unmanaged_tree_t;
 
 typedef union {
     struct {
-            uint64_t file_ptr; //TODO: Fill when vfs is implemented.
-            uint64_t offset;
-        } file;
+        uint64_t file_ptr; //TODO: Fill when vfs is implemented.
+        uint64_t offset;
+    } file;
 
-        struct {
-            uint64_t physical_start; //For MMIO mapping, since it will be physically continuous. Regular mapping will be reversed from walking page tables.
-        } mmio;
+    struct {
+        uint64_t physical_start; //For MMIO mapping, since it will be physically continuous. Regular mapping will be reversed from walking page tables.
+    } mmio;
+
+    struct {
+        vma_unmanaged_tree_t tree;
+    } unmanaged;
 } vma_backing;
 
 //The node in the AVL tree used for the VMA

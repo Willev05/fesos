@@ -34,6 +34,12 @@ typedef struct {
     size_t page_count;
 } dma_block_t;
 
+typedef struct {
+    void* virtual_addr;
+    uint64_t *physical_addrs;
+    size_t page_count;
+} dma_scatter_block_t;
+
 typedef enum {
     MMIO_DEFAULT,
     MMIO_WRITE_COMBINING
@@ -46,3 +52,5 @@ void *kmap_mmio(uint64_t physical_address, size_t size, mmio_flags_t mmio_flag);
 dma_block_t kallocate_dma(size_t page_count);
 void kunmap_mmio(void *virtual_address);
 void kfree_dma(dma_block_t block);
+dma_scatter_block_t kallocate_scatter_dma(size_t page_count);
+void kfree_scatter_dma(dma_scatter_block_t block);

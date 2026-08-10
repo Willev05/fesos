@@ -186,6 +186,63 @@ dma_block_t kallocate_dma(size_t page_count) {
 }
 
 /**
+ * @brief Allocates a DMA memory area scattered in physical memory. Virtual memory is however contiguous. Used if physical memory fragmentation for DMA is no issue.
+ * @param page_count The count of pages to allocate. Will be contiguopus virtually, scattered physically.
+ * @return A struct containing the page count, virtual address, and an array of the physicall addresses, in increasing order. This means that index 0 will be v_addr + 0, index 1 is v_addr + 4096, etc.
+ */
+dma_scatter_block_t kallocate_scatter_dma(size_t page_count) {
+    dma_scatter_block_t dma_scatter_block;
+
+    if (!page_count) {
+        dma_scatter_block.virtual_addr = NULL;
+        return dma_scatter_block;
+    }
+    
+    //Start by making an array to store the physical addresses.
+    uint64_t *physical_addresses = kmalloc(sizeof(uint64_t) * page_count);
+    if (!physical_addresses) {
+        dma_scatter_block.virtual_addr = NULL;
+        return dma_scatter_block;
+    }
+
+    //Next, allocate the virtual address.
+    vma_backing backing;
+    backing.unmanaged.tree = VMA_TREE_KMMIO;
+    void *virtual_address = vma_allocate_memory_from_ktree(page_count * 0x1000, VMA_UNMANAGED_MAPPING, 0, &backing);
+    if (!virtual_address) {
+        dma_scatter_block.virtual_addr = NULL;
+        kfree(physical_addresses);
+        return dma_scatter_block;
+    }
+
+    //Try to allocate the physical pages.
+    for (size_t page = 0; page < page_count; page++) {
+        uint64_t new_frame = (uint64_t)pmm_allocate_frames(1, 0x1000);
+        if (new_frame == 0) {
+            dma_scatter_block.virtual_addr = NULL;
+            kfree(physical_addresses);
+            return dma_scatter_block;
+        }
+        physical_addresses[page] = new_frame;
+    }
+
+    //Now, return the block.
+    dma_scatter_block.page_count = page_count;
+    dma_scatter_block.physical_addrs = physical_addresses;
+    dma_scatter_block.virtual_addr = virtual_address;
+    return dma_scatter_block;
+}
+
+void kfree_scatter_dma(dma_scatter_block_t block) {
+    vma_free_memory_from_ktree((uint64_t)block.virtual_addr);
+    //Then, free each page in a loop since physical pages are not contiguous.
+    for (size_t page = 0; page < block.page_count; page++) {
+        pmm_free_frames(block.physical_addrs[page], 1);
+    }
+    kfree(block.physical_addrs);
+}
+
+/**
  * @brief Unmaps mmio and frees from the kernel memory tree.
  * @param virtual_address Pointer to the virtual memory to be unmapped.
  * @param size Size in bytes of the memory area to unmap (same as passed to map_mmio).
