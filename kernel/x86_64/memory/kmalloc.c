@@ -233,6 +233,10 @@ dma_scatter_block_t kallocate_scatter_dma(size_t page_count) {
     return dma_scatter_block;
 }
 
+/**
+ * @brief Frees a scattered DMA memory area.
+ * @param block The DMA block representing the area to free.
+ */
 void kfree_scatter_dma(dma_scatter_block_t block) {
     vma_free_memory_from_ktree((uint64_t)block.virtual_addr);
     //Then, free each page in a loop since physical pages are not contiguous.
