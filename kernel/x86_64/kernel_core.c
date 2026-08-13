@@ -15,6 +15,7 @@
 
 #include "include/buses/pci.h"
 #include "include/drivers/storage/ahci.h"
+#include "include/drivers/block/lbd.h"
 
 uint32_t magic_number = 0xDEADC0DE;
 
@@ -68,6 +69,13 @@ void _start(boot_info *BootInfo) {
     pci_device_t ahci_cont;
     pci_find_device(0x01, 0x06, &ahci_cont);
     ahci_init_device(&ahci_cont);
+
+    uint64_t *read_buffer = kmalloc(512);
+    lbd_read(0, 1, 1, (void*)read_buffer);
+
+    if (*read_buffer == 0x5452415020494645) {
+        kprintf("Read LBA 1 success!\n");
+    }
 
     kprintf("Hello from the kernel!\n");
 

@@ -241,7 +241,7 @@ void kfree_scatter_dma(dma_scatter_block_t block) {
     vma_free_memory_from_ktree((uint64_t)block.virtual_addr);
     //Then, free each page in a loop since physical pages are not contiguous.
     for (size_t page = 0; page < block.page_count; page++) {
-        pmm_free_frames(block.physical_addrs[page], 1);
+        pmm_free_frames((void*)block.physical_addrs[page], 1);
     }
     kfree(block.physical_addrs);
 }

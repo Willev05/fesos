@@ -210,3 +210,39 @@ void *volatile_memset(volatile void *start, uint8_t pattern, size_t size) {
 
     return start;
 }
+
+/**
+ * @brief Copies memory from the source buffer to the destination bufer over `size` bytes.
+ * @param dest The destination buffer.
+ * @param src The source bufferr.
+ * @param size The count of bytes to transfer.
+ * @return The destination buffer.
+ */
+void *memcpy(void *dest, const void *src, size_t size) {
+    uint8_t *dest8 = (uint8_t*)dest;
+    const uint8_t *src8 = (uint8_t*)src8;
+
+    //Reach the 8 byte allignment, at least on the destination. If src and dest do not share the same last 3 bits, there will be slowdowns.
+    while(((uint64_t)dest8 & 0x7) && 0 < size) {
+        *dest8++ = *src8++;
+        size--;
+    }
+
+    //Now, handle the middle, hopefully aligned part.
+    uint64_t *dest64 = (uint64_t*)dest8;
+    uint64_t *src64 = (uint64_t*)src8;
+    while(size >= 8) {
+        *dest64++ = *src64++;
+        size -= 8;
+    }
+
+    //Handle the tail.
+    dest8 = (uint8_t*)dest64;
+    src8 = (uint8_t*)src64;
+    while (size > 0) {
+        *dest8++ = *src8++;
+        size--;
+    }
+
+    return dest;
+}

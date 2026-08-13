@@ -5,6 +5,7 @@
 #include "../../include/common/printf.h"
 #include "../../include/kernel/errno.h"
 #include "../../include/memory/memory.h"
+#include "../../include/common/stdstr.h"
 
 static lbd_logical_drive_t *lbd_drives[256];
 static uint8_t next_drive_num = 0;
@@ -34,11 +35,36 @@ int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     }
 
     //Check alignment of the v_address. If not even (word aligned) then we need to use bounce buffers.
-    void *read_buffer = buffer;
     if ((uint64_t)buffer & 1ULL) {
+        kprintf("[LBD] User buffer is not word aligned. Falling back to bounce buffer.\n");
         //We need to request the pages. In case of physical fragmentation, we ask in 1 pageat a time. To reduce delays, bypass the vma. Ask pmm directly.
-        
+        size_t page_count = count * logical_drive->device_info.logical_sector_size_bytes / 0x1000;
+        dma_scatter_block_t scatter_block = kallocate_scatter_dma(page_count);
+        if (!scatter_block.virtual_addr) {
+            kprintf("[LBD] Could not allocate scattered bounce buffer. Out of memory.\n");
+            return -ENOMEM;
+        }
+
+        //Then, call the driver.
+        int read_errno = logical_drive->driver_api->read(logical_drive, lba, count, scatter_block.virtual_addr);
+        if (read_errno) {
+            //Error happened. Free everything and return the same code up the call stack.
+            kprintf("[LBD] Driver returned error code. Freeing resources and returning.\n");
+            kfree_scatter_dma(scatter_block);
+            return read_errno;
+        }
+
+        //Now, we need to copy the buffer over.
+        memcpy(buffer, scatter_block.virtual_addr, count * logical_drive->device_info.logical_sector_size_bytes);
+        kfree_scatter_dma(scatter_block);
+        kprintf("[LBD] Read using bounce buffer finished.\n");
+        return 0;
     }
 
-    logical_drive->driver_api->read(logical_drive, lba, count, read_buffer);
+    else {
+        return logical_drive->driver_api->read(logical_drive, lba, count, buffer);
+        kprintf("[LBD] Read finished.\n");
+    }
+
+    
 }

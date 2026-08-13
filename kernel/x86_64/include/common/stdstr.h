@@ -17,3 +17,4 @@ int str_reverse(char *str, size_t start_index, size_t end_index);
 size_t str_len(char *str);
 void *memset(void *start, uint8_t pattern, size_t size);
 void *volatile_memset(volatile void *start, uint8_t pattern, size_t size);
+void *memcpy(void *dest, const void *src, size_t size);
