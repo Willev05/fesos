@@ -6,9 +6,15 @@
 #include "../include/common/stdstr.h"
 
 int kprintf(const char* fmt, ...) {
-    static char buffer[32];
     va_list args;
     va_start(args, fmt);
+    vkprintf(fmt, args);
+    va_end(args);
+    return 0;
+}
+
+int vkprintf(const char *fmt, va_list args) {
+    static char buffer[32];
 
     //We loop through the entire format string.
     for (const char* p = fmt; *p != '\0'; p++) {
@@ -69,7 +75,5 @@ int kprintf(const char* fmt, ...) {
             }
         }
     }
-
-    va_end(args);
     return 0;
 }
