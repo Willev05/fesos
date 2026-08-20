@@ -4,15 +4,18 @@
 /* Note: Structure definitions from OSDev Wiki. https://wiki.osdev.org/AHCI */
 /* Note: Delays, timeouts, etc from spec document. https://www.intel.com/content/dam/www/public/us/en/documents/technical-specifications/serial-ata-ahci-spec-rev1-3-1.pdf */
 /* Note: For SATA commands. https://tc.gts3.org/cs3210/2016/spring/r/hardware/ATA8-ACS.pdf */
+#define CURRENT_LOG_SYS LOG_SYS_STORAGE
+#define CURRENT_LOG_NAME "AHCI"
+
 #include "../../include/buses/pci.h"
 #include "../../include/memory/kmalloc.h"
 #include "../../include/kernel/time.h"
 #include "../../include/kernel/errno.h"
-#include "../../include/common/printf.h"
 #include "../../include/common/stdstr.h"
 #include "../../include/drivers/block/lbd.h"
 #include "../../include/common/math.h"
 #include "../../include/memory/memory.h"
+#include "../../include/common/logging.h"
 
 typedef volatile struct tagHBA_PORT
 {
@@ -250,7 +253,7 @@ static const lbd_driver_api_t ahci_api = {
 };
 
 int ahci_init_device(pci_device_t *pci_device) {
-	kprintf("[AHCI] Found controller at bus %lu, device %lu, function %lu.\n", pci_device->bus, pci_device->device, pci_device->function);
+	LOG_I("Found controller at bus %lu, device %lu, function %lu.\n", pci_device->bus, pci_device->device, pci_device->function);
 
 	//Start with looking at its power state.
 	//Requires us to find it within the capability list.
@@ -258,7 +261,7 @@ int ahci_init_device(pci_device_t *pci_device) {
 	uint16_t status_reg = pci_read_config(pci_device, 0x6, 2);
 	//If bit 4 is set, then the list exists!
 	if (status_reg & 0x10) {
-		kprintf("[AHCI] Controller supports capability list. Exploring for potential power management.\n");
+		LOG_D("Controller supports capability list. Exploring for potential power management.\n");
 		//We will start to browse the linked-list of capability pointers. 
 		uint8_t next_offset = pci_read_config(pci_device, 0x34, 1);
 		while (next_offset != 0) {
@@ -268,12 +271,12 @@ int ahci_init_device(pci_device_t *pci_device) {
 			uint8_t cap_id = cap & 0xFF;
 			next_offset = (uint8_t)(cap >> 8);
 
-			kprintf("[AHCI] Found capability %x at offset %x.\n", cap_id, current_offset);
+			LOG_D("Found capability %x at offset %x.\n", cap_id, current_offset);
 			if (cap_id == 0x1) {
 				//Found the power capability
-				kprintf("[AHCI] Controller supports power management. Attempting to wake.\n");
+				LOG_D("Controller supports power management. Attempting to wake.\n");
 				uint16_t pmcsr = pci_read_config(pci_device, current_offset + 0x4, 2);
-				kprintf("[AHCI] Controller power state: %u.\n", pmcsr & 0x3);
+				LOG_D("Controller power state: %u.\n", pmcsr & 0x3);
 				pmcsr &= ~0x3U;
 				pci_write_config(pci_device, current_offset + 0x4, pmcsr, 2);
 				break;
@@ -306,7 +309,7 @@ int ahci_init_device(pci_device_t *pci_device) {
 
 	while ((hba->ghc & 1) && (tsc_timer_get_ms() - start_ms < 1000)) tsc_sleep_ms(1);
 	if (hba->ghc & 1) {
-		kprintf("[AHCI] Controller at bus %lu, device %lu, function %lu has timed out after sending reset command.\n", pci_device->bus, pci_device->device, pci_device->function);
+		LOG_E("Controller at bus %lu, device %lu, function %lu has timed out after sending reset command.\n", pci_device->bus, pci_device->device, pci_device->function);
 		return -ETIMEDOUT;
 	} 
 
@@ -331,7 +334,7 @@ int ahci_init_device(pci_device_t *pci_device) {
 
 			//If the device is detected and communicating (det == 0x3) AND the interface is in an active state (ipm == 0x1) then the port is active and connected.
 			if (det == 3 && ipm == 1) {
-				kprintf("[AHCI] Found drive on Port %lu.\n", (uint64_t)i);
+				LOG_I("Found drive on Port %lu.\n", (uint64_t)i);
 				ahci_init_port(i, hba);
 			}
 		}
@@ -350,10 +353,10 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	uint64_t start_ms = tsc_timer_get_ms();
 	while ((port->cmd & (0x1U << 15)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
 	if (port->cmd & (0x1U << 15)) {
-		kprintf("[AHCI] Port %u: Timed out after sending DMA stop command.\n", port_num);
+		LOG_E("Port %u: Timed out after sending DMA stop command.\n", port_num);
 		return AHCI_PORT_TIMEOUT;
 	} 
-	kprintf("[AHCI] Port %u: DMA stop success.\n", port_num);
+	LOG_D("Port %u: DMA stop success.\n", port_num);
 
 	//Then set bit 4 (FIS Receive Enable) to 0 to disable FIS receive.
 	port->cmd &= ~0x10U;
@@ -362,14 +365,14 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	start_ms = tsc_timer_get_ms();
 	while ((port->cmd & (0x1U << 14)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
 	if (port->cmd & (0x1U << 14)) {
-		kprintf("[AHCI] Port %u: Timed out after sending FIS Receive disable.\n", port_num);
+		LOG_E("Port %u: Timed out after sending FIS Receive disable.\n", port_num);
 		return AHCI_PORT_TIMEOUT;
 	} 
-	kprintf("[AHCI] Port %u: FIS Received disable success.\n", port_num);
+	LOG_D("Port %u: FIS Received disable success.\n", port_num);
 
 	dma_block_t port_mem = kallocate_dma(1);
 	if (!port_mem.virtual_addr) {
-		kprintf("[AHCI] Port %u: DMA control page allocation failed. Out of memory. Cleaning up and returning...\n", port_num);
+		LOG_E("Port %u: DMA control page allocation failed. Out of memory. Cleaning up and returning...\n", port_num);
 	}
 	uint64_t dma_physical_base = port_mem.physical_addr;
 
@@ -389,25 +392,25 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	start_ms = tsc_timer_get_ms();
 	while (!(port->cmd & (0x1U << 14)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
 	if (!(port->cmd & (0x1U << 14))) {
-		kprintf("[AHCI] Port %u: Timed out after sending FIS Receive enable.\n", port_num);
+		LOG_E("Port %u: Timed out after sending FIS Receive enable.\n", port_num);
 		kfree_dma(port_mem);
 		return AHCI_PORT_TIMEOUT;
 	} 
-	kprintf("[AHCI] Port %u: FIS Received enable success.\n", port_num);
+	LOG_D("Port %u: FIS Received enable success.\n", port_num);
 
 	uint32_t sig = port->sig;
 	//Here, we check the port type.
 	switch (sig) {
 		case 0x00000101:
-			kprintf("[AHCI] Port %u: Type: SATA HDD/SSD\n", port_num);
+			LOG_I("Port %u: Type: SATA HDD/SSD\n", port_num);
 			break;
 		case 0xEB140101:
-			kprintf("[AHCI] Port %u: Type: ATAPI drive, skipping!\n", port_num);
+			LOG_I("Port %u: Type: ATAPI drive, skipping!\n", port_num);
 			kfree_dma(port_mem);
 			return AHCI_PORT_NOT_IMPLEMENTED;
 			break;
 		default:
-			kprintf("[AHCI] Port %u: Type: Unsupported (%x), skipping!\n", port_num, sig);
+			LOG_I("Port %u: Type: Unsupported (%x), skipping!\n", port_num, sig);
 			kfree_dma(port_mem);
 			return AHCI_PORT_NOT_IMPLEMENTED;
 			break;
@@ -420,11 +423,11 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	start_ms = tsc_timer_get_ms();
 	while (!(port->cmd & (0x1U << 15)) && (tsc_timer_get_ms() - start_ms < 500)) tsc_sleep_ms(1);
 	if (!(port->cmd & (0x1U << 15))) {
-		kprintf("[AHCI] Port %u: Timed out after sending dma processing engine start.\n", port_num);
+		LOG_E("Port %u: Timed out after sending dma processing engine start.\n", port_num);
 		kfree_dma(port_mem);
 		return AHCI_PORT_TIMEOUT;
 	} 
-	kprintf("[AHCI] Port %u: DMA processing engine started success.\n", port_num);
+	LOG_D("Port %u: DMA processing engine started success.\n", port_num);
 
 	//Now, we are sure we only have a SATA HDD/SSD.
 	//Clear the potential interrupts and/or errors.
@@ -434,7 +437,7 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	//Prep a driver_data struct to sotre information like our 32 command list pages.
 	ahci_driver_data_t *driver_data = (ahci_driver_data_t*)kmalloc(sizeof(ahci_driver_data_t));
 	if (!driver_data) {
-		kprintf("[AHCI] Port %u: Driver data struct alloc failed. Out of memory. Cleaning up and returning...\n", port_num);
+		LOG_E("Port %u: Driver data struct alloc failed. Out of memory. Cleaning up and returning...\n", port_num);
 		kfree_dma(port_mem);
 	}
 
@@ -443,7 +446,7 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	for (uint8_t i = 0; i < 32; i++) {
 		dma_block_t requested_block = kallocate_dma(1);
 		if (!requested_block.virtual_addr) {
-			kprintf("[AHCI] Port %u: Unable to allocate a page for one of the command tables! Cleaning up and exiting...\n", port_num);
+			LOG_E("Port %u: Unable to allocate a page for one of the command tables! Cleaning up and exiting...\n", port_num);
 			kfree_dma(port_mem);
 			kfree(driver_data);
 			return AHCI_PORT_OUT_OF_MEMORY;
@@ -505,7 +508,7 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	{
 		//Task File Error Check [1]
 		if (port->tfd & 0x01) { 
-			kprintf("[AHCI] Port %u: Identify Device command rejected by disk status engine!\n", port_num);
+			LOG_E("Port %u: Identify Device command rejected by disk status engine!\n", port_num);
 			kfree_dma(port_mem);
 			kfree(driver_data);
 			return AHCI_PORT_TIMEOUT;
@@ -513,7 +516,7 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 		tsc_sleep_ms(1);
 	}
 	if (port->ci & 0x1U) {
-		kprintf("[AHCI] Port %u: Timed out after sending IDENTIFY DEVICE.\n", port_num);
+		LOG_E("Port %u: Timed out after sending IDENTIFY DEVICE.\n", port_num);
 		kfree_dma(port_mem);
 		kfree(driver_data);
 		return AHCI_PORT_TIMEOUT;
@@ -522,7 +525,7 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	//Need to swap the word's chars due to ATA weirdness.
 	ahci_parse_model_string(id_data);
 	char *model_string = (char*)(&id_data[27]);
-	kprintf("[AHCI] Port %u: Model Number: %s\n", port_num, model_string);
+	LOG_D("Port %u: Model Number: %s\n", port_num, model_string);
 
 	uint8_t lba48_support;
 	uint64_t sector_count;
@@ -576,12 +579,12 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 		}
 	}
 
-	kprintf("[AHCI] Port %u: Logical sector size: %u\n", port_num, logical_sector_size);
-	kprintf("[AHCI] Port %u: Physical sector size: %u\n", port_num, physical_sector_size);
-	kprintf("[AHCI] Port %u: lba-48bit support: %u\n", port_num, lba48_support);
-	kprintf("[AHCI] Port %u: Total number of user addressable sectors: %lu\n", port_num, sector_count);
-	kprintf("[AHCI] Port %u: Volatile write cache enabled: %lu\n", port_num, write_cache);
-	kprintf("[AHCI] Port %u: Logical alignment offset: %lu\n", port_num, sector_offset);
+	LOG_D("Port %u: Logical sector size: %u\n", port_num, logical_sector_size);
+	LOG_D("Port %u: Physical sector size: %u\n", port_num, physical_sector_size);
+	LOG_D("Port %u: lba-48bit support: %u\n", port_num, lba48_support);
+	LOG_D("Port %u: Total number of user addressable sectors: %lu\n", port_num, sector_count);
+	LOG_D("Port %u: Volatile write cache enabled: %lu\n", port_num, write_cache);
+	LOG_D("Port %u: Logical alignment offset: %lu\n", port_num, sector_offset);
 
 	//Now, we can prepare a struct to pass to the lbd.
 	lbd_logical_drive_t *drive = (lbd_logical_drive_t*)kmalloc(sizeof(lbd_logical_drive_t));
@@ -606,6 +609,8 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	for (uint8_t i = 0; i < 40; i++) {
 		drive->drive_name[i] = raw_bytes[54 + i];
 	}
+
+	LOG_I("Port %u: Driver ready for LBD registering.\n", port_num);
 
 	lbd_register_drive(drive);
 	return 0;
@@ -729,13 +734,13 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 	{
 		//Task File Error Check [1]
 		if (port->tfd & 0x01) { 
-			kprintf("[AHCI] Port %u: Read command rejected by disk status engine!\n", driver_data->port_num);
+			LOG_E("Port %u: Read command rejected by disk status engine!\n", driver_data->port_num);
 			return -EIO;
     	}
 		tsc_sleep_ms(1);
 	}
 	if (port->ci & 0x1U) {
-		kprintf("[AHCI] Port %u: Timed out after sending read request.\n", driver_data->port_num);
+		LOG_E("Port %u: Timed out after sending read request.\n", driver_data->port_num);
 		return -EIO;
 	} 
 

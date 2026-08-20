@@ -31,6 +31,9 @@ void _start(boot_info *BootInfo) {
 
     BootInfo = (boot_info*)((uint64_t)(BootInfo) + DIRECT_MAP_BASE);
 
+    //For debugging, change log subsystems up here.
+    log_enable_subsystem_debug(LOG_SYS_ALL);
+
     serial_init();
     idt_init();
     gdt_init();
