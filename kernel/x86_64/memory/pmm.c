@@ -1,12 +1,15 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
+#define CURRENT_LOG_SYS LOG_SYS_PMM
+#define CURRENT_LOG_NAME "PMM"
 
 #include "../include/memory/pmm.h"
 #include "../include/memory/vmm.h"
 #include "../include/common/math.h"
-#include "../../../bootloader/efi.h"
 #include "../include/kernel/boot_info.h"
 #include "../include/common/stdtypes.h"
+#include "../include/common/logging.h"
+#include "../include/kernel/panic.h"
 
 static volatile uint8_t *bitmap;
 static uint64_t bitmap_size_bytes;
@@ -19,7 +22,7 @@ static void unset_bitmap_bit(uint64_t bit_number);
 static uint8_t get_bitmap_bit(uint64_t bit_number);
 static void pmm_zero_page(uint64_t p_addr);
 
-//Initialize the PMM. Includes reading the UEFI mmap to get available physical memory area and allocate the bitmap for use in other functions. MUST BE RAN FIRST.
+//Initialize the PMM. 
 void pmm_init(uint64_t bi_v) {
     boot_info *bi = (boot_info*)bi_v;
     bitmap = (uint8_t*)(bi->memory_bitmap_address + DIRECT_MAP_BASE);
@@ -27,6 +30,8 @@ void pmm_init(uint64_t bi_v) {
     bitmap_size_frames = bi->memory_physical_total_frames;
     memory_total_frame_count = bi->memory_physical_total_frames;
     memory_used_frame_count = bi->memory_physical_used_frames;
+
+    LOG_I("Memory map ready. Total usable RAM: %lu MiB.\n", (memory_total_frame_count * 0x1000) / 0x100000);
 }
 
 //Need to implement allignment support.
@@ -39,6 +44,12 @@ void *pmm_allocate_frames(uint64_t count, uint64_t alignment) {
     uint64_t step = alignment / 4096;
     //To quickly check over 64 pages. This should work since the bitmap should be page alligned, therefore 8 byte alligned.
     uint64_t *bitmap64 = (uint64_t*)bitmap; 
+    LOG_D("Allocating %lu contiguous frames (align %lu).\n", count, alignment);
+
+    uint64_t remaining_frames = memory_total_frame_count - memory_used_frame_count;
+    if (remaining_frames * 100 / memory_total_frame_count < 6) {
+        LOG_W("Low physical memory! Free frames: %lu / %lu.\n", remaining_frames, memory_total_frame_count);
+    }
 
     //Main loop, will loop through legal "base pages" that are always alligned.
     for (uint64_t base = 0; base < bitmap_size_frames; base += step){
@@ -61,11 +72,14 @@ void *pmm_allocate_frames(uint64_t count, uint64_t alignment) {
             }
         }
 
-        //This loop will take our alligned value and verify that there are n consecutvie free frames.
+        //This loop will take our aligned value and verify that there are n consecutvie free frames.
         uint64_t found = 0;
         for (uint64_t i = 0; i < count; i++) {
             //Guard for out of physical memory bounds;
-            if (base + i >= bitmap_size_frames) return NULL;
+            if (base + i >= bitmap_size_frames) {
+                LOG_E("Failed to allocate %lu contiguous frames. No consecutive frames can satisfy the request.\n");
+                return NULL;
+            } 
             
             //Checks to see if the frame is already in use, where it will break if so.
             if (get_bitmap_bit(base + i)) break;
@@ -79,19 +93,33 @@ void *pmm_allocate_frames(uint64_t count, uint64_t alignment) {
                 set_bitmap_bit(base + i);
                 //And we also zero out these pages.
                 pmm_zero_page((base + i) * 0x1000);
+                memory_used_frame_count++;
             }
-            
+            LOG_D("Found frames starting at address %lx.\n", base * 4096);
             return (void*)(base * 4096);
         }
 
     }
     //If we reach the end of the loop, then no physical memory satisfies the requirements.
+    LOG_E("Failed to allocate %lu contiguous frames. No consecutive frames can satisfy the request.\n");
     return NULL;
 }
 
 void pmm_free_frames(void *start_address, uint64_t count) {
     if (!count) return; 
+    LOG_D("Freeing %lu frames starting at physical address %lx.\n", count, (uint64_t)start_address);
     for (uint64_t i = (uint64_t)start_address / 4096; i < count; count++) {
+        //Need to check if the frames to free are even legal.
+        if (i >= bitmap_size_frames) {
+            LOG_E("Illegal memory free request! Attempted to free frame %lu, whilst max frame is %lu. Panicking!\n", i, bitmap_size_frames - 1);
+            kernel_panic("PMM: Invalid physical address out of range.\n");
+        }
+        //Also, check if already free. If so, double free and something is corrupted.
+        if (!get_bitmap_bit(i)) {
+            LOG_E("Illegal memory free request! Attempted to free frame %lu, whilst frame is already free. (double free)\n", i);
+            kernel_panic("PMM: Double free detected.\n");
+        }
+
         unset_bitmap_bit(i);
     }
 }
