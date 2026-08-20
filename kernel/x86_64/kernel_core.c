@@ -1,6 +1,5 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-
 #include "include/kernel/elf.h"
 #include "include/kernel/boot_info.h"
 #include "include/drivers/serial.h"
@@ -12,6 +11,7 @@
 #include "include/memory/kmalloc.h"
 #include "include/common/printf.h"
 #include "include/kernel/time.h"
+#include "include/common/logging.h"
 
 #include "include/buses/pci.h"
 #include "include/drivers/storage/ahci.h"
@@ -35,18 +35,18 @@ void _start(boot_info *BootInfo) {
     idt_init();
     gdt_init();
     tsc_timer_init();
-    kprintf("Finished loading tables (gdt and idt) and other basic systems\n");
+    LOG_I("Finished loading tables (gdt and idt), serial, and tsc timers.\n");
 
     pmm_init((uint64_t)BootInfo);
     vmm_init((uint64_t)BootInfo);
     vma_init();
     isr_register_interrupt_handler(14, vmm_page_fault_callback);
 
-    kprintf("Finished memory manager init.\n");
+    LOG_I("Finished memory managers init.\n");
 
     kmalloc_init();
 
-    kprintf("Finished kmalloc init.\n");
+    LOG_I("Finished kmalloc init.\n");
     
     volatile uint64_t *massive_integer = kmalloc(sizeof(uint64_t));
     *massive_integer = 502;
@@ -74,10 +74,10 @@ void _start(boot_info *BootInfo) {
     lbd_read(0, 1, 1, (void*)read_buffer);
 
     if (*read_buffer == 0x5452415020494645) {
-        kprintf("Read LBA 1 success!\n");
+        LOG_I("Read LBA 1 success!\n");
     }
 
-    kprintf("Hello from the kernel!\n");
+    LOG_I("Hello from the kernel!\n");
 
     while (1) {
         __asm__("hlt");
