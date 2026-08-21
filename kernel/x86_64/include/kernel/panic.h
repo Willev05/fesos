@@ -3,4 +3,6 @@
 
 #pragma once
 
-void kernel_panic(char *msg);
+void kernel_panic(const char *file, int line, const char *msg, ...);
+
+#define PANIC(msg, ...) kernel_panic(__FILE_NAME__, __LINE__, msg, ##__VA_ARGS__);

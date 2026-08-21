@@ -31,7 +31,7 @@ void log_message(log_level_t log_level, log_subsystem_t subsystem, const char *c
     uint16_t ms = (uint16_t)(millisecond % 1000ULL);
 
     //Print a timestamp and filename. The level + rest of message handled later.
-    kprintf("[%u:%u:%u:%u] [%s-", hour, minutes, seconds, ms, component_name);
+    kprintf("[%u:%u:%u.%u] [%s-", hour, minutes, seconds, ms, component_name);
     
     char *log_level_txt;
     
