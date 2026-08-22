@@ -1,5 +1,7 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
+#define CURRENT_LOG_SYS LOG_SYS_VMM
+#define CURRENT_LOG_NAME "VMA"
 
 #include "../include/memory/vma.h"
 #include "../include/memory/vmm.h"
@@ -7,6 +9,7 @@
 #include "../include/common/math.h"
 #include "../include/common/stdtypes.h"
 #include "../include/common/printf.h"
+#include "../include/common/logging.h"
 
 #define MINIMUM_AVAILABLE_NODES 5
 
@@ -45,14 +48,21 @@ uint8_t vma_demand_paging(uint64_t fault_addr) {
     if (fault_addr <= 0x00007FFFFFFFFFFF) node_for_address = NULL; //TODO: Implement when userland exists.
     else node_for_address = vm_ds_get_node(kernel_vma_heap_tree_root, fault_addr); //Only kernel heap is tracked by VMA and has demand paging.
 
-    if (!node_for_address) return 1; //Return error that the address is in fact invalid.
-    if (node_for_address->type != VMA_REGULAR) return 1; //Also return error if the address is not of demand paging type.
+    if (!node_for_address) {
+        LOG_E("Address %lx is not a valid virtual address in requested tree.\n", fault_addr);
+        return 1; //Return error that the address is in fact invalid.
+    } 
+    if (node_for_address->type != VMA_REGULAR) {
+        LOG_E("Address %lx is not an address type which supports demand paging. (not VMA_REGULAR)\n", fault_addr);
+        return 1; //Also return error if the address is not of demand paging type.
+    } 
     //TODO: Handle file-backed memory.
     //We handle the conventional memory here.
     //We then need to allocate a frame for this.
     uint64_t physical_frame = (uint64_t)pmm_allocate_frames(1, 4096);
     //And then map it to the page this address is part of.
     vmm_map(fault_addr, physical_frame, 1, node_for_address->flags);
+    LOG_D("Demand paging mapped address %lx successfully.\n", fault_addr);
     return 0;
 }
 
@@ -124,8 +134,15 @@ void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_ty
     
     //allocation_backing will be copied over, node will NOT point to the specific allocation_backing passed in. NULL can be passed when allocating normal memory.
     if (allocation_type == VMA_FREE) return NULL;
+    LOG_D("Received allocation request of size %lu, type %u, flags %u.\n", size, allocation_type, flags);
     //We need to locate the worst fit for this request.
     vm_ds_node *node_for_request = vm_ds_find_worst_fit(*root, size);
+
+    //NULL check
+    if (!node_for_request) {
+        LOG_E("Could not fulfill request. Find worst fit returned NULL meaning out of contiguous virtual memory in this tree at size %lu.\n", size);
+        return NULL;
+    }
 
     //We will allocate from the start to either the whole block or up to a part.
     if (size == node_for_request->size) {
@@ -147,6 +164,8 @@ void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_ty
         //Then, simply insert into the tree.
         *root = vm_ds_insert(*root, node_for_leftover);
     }
+
+    LOG_D("Found slot starting at address %lx.\n", node_for_request->start_addr);
 
     //Now, we need to do the backing for the virtual memory.
     //Normal memory does not need to be saved in node, since page tables are enough. Lazy paging will use those.
@@ -179,8 +198,14 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     //kprintf("\nTree before free:\n");
     //vma_print_tree(*root);
 
+    LOG_D("Received free request of address %lx.\n", start_addr);
+
     //We first need to find this node from the tree. It needs to be the start_address of the requested block.
     vm_ds_node *node_to_free = vm_ds_get_node(*root, start_addr);
+
+    if (!node_to_free) {
+        LOG_E("No node with address %lx could be found in tree.\n", start_addr);
+    }
 
     //We then need to free the underlying physical memory and invalidate the vmm mapping.
     if (node_to_free->type == VMA_HARDWARE_MMIO) {
@@ -206,6 +231,7 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     //Now, we have three cases:
     //Case 1: Both pre/suc are free
     if ((successor && successor->type == VMA_FREE) && (predecessor && predecessor->type == VMA_FREE)) {
+        LOG_D("Executing case 1 coalescing.\n");
         //We calculate the new block size, which is all three blocks together.
         uint64_t new_block_size = successor->size + predecessor->size + node_to_free->size;
 
@@ -224,6 +250,7 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     }
     //Case 2: pre is free
     else if (predecessor && predecessor->type == VMA_FREE) {
+        LOG_D("Executing case 2 coalescing.\n");
         //We calculate the new block size, which is both blocks together.
         uint64_t new_block_size = predecessor->size + node_to_free->size;
 
@@ -240,6 +267,7 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     }
     //Case 3: suc is free
     else if (successor && successor->type == VMA_FREE) {
+        LOG_D("Executing case 3 coalescing.\n");
         //We calculate the new block size, which is both blocks together.
         uint64_t new_block_size = successor->size + node_to_free->size;
 
@@ -257,6 +285,7 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     }
     //Case 4: suc/pre are either null and/or not free
     else {
+        LOG_D("Executing case 4 coalescing.\n");
         //We just mark the node as free.
         node_to_free->type = VMA_FREE;
     }
@@ -266,6 +295,7 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
 }
 
 void replenish_slab_from_tree() {
+    LOG_D("VMA free node list is low, replenishing slab from kheap.\n");
     //We want to get as many nodes that can fit in one page
     uint32_t node_per_page = 4096 / sizeof(vm_ds_node);
     vm_ds_node *start_of_page = (vm_ds_node*)vma_allocate_memory_from_tree(&kernel_vma_heap_tree_root, 4096, VMA_REGULAR, PT_GLOBAL | PT_WRITEABLE | PT_NX, NULL);
