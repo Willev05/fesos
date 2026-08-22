@@ -213,6 +213,7 @@ dma_block_t kallocate_dma(size_t page_count) {
  */
 dma_scatter_block_t kallocate_scatter_dma(size_t page_count) {
     dma_scatter_block_t dma_scatter_block;
+    uint32_t vmm_flags = PT_GLOBAL | PT_WRITEABLE | PT_DISABLE_CACHING;
 
     if (!page_count) {
         dma_scatter_block.virtual_addr = NULL;
@@ -238,15 +239,19 @@ dma_scatter_block_t kallocate_scatter_dma(size_t page_count) {
         return dma_scatter_block;
     }
 
+    uint64_t current_v_address = (uint64_t)virtual_address;
     //Try to allocate the physical pages.
     for (size_t page = 0; page < page_count; page++) {
         uint64_t new_frame = (uint64_t)pmm_allocate_frames(1, 0x1000);
-        if (new_frame == 0) {\
+        if (new_frame == 0) {
             LOG_E("PMM could not find a free frame for a page in the scattered dma. Failed at page %lu / %lu.\n", page, page_count);
             dma_scatter_block.virtual_addr = NULL;
             kfree(physical_addresses);
             return dma_scatter_block;
         }
+        //Map the virtual to physical addresses.
+        vmm_map(current_v_address, new_frame, 1, vmm_flags);
+        current_v_address += 0x1000;
         physical_addresses[page] = new_frame;
     }
 

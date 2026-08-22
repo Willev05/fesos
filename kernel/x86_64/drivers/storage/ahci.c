@@ -617,13 +617,15 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 }
 
 static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, void *buffer) {
+	LOG_D("Received read-request for LBA %lu and %lu sectors.\n", lba, count);
 	ahci_driver_data_t *driver_data = (ahci_driver_data_t*)(logical_drive->driver_data);
 	HBA_MEM *hba = driver_data->hba_mmio;
 	HBA_PORT *port = driver_data->port_mmio;
 	dma_block_t control_dma = driver_data->control_dma;
+	dma_block_t command_table_dma = driver_data->command_tables[0];
 
 	volatile HBA_CMD_HEADER *command_header = (volatile HBA_CMD_HEADER*)control_dma.virtual_addr;
-	volatile HBA_CMD_TBL *cmdtbl = (volatile HBA_CMD_TBL*)(control_dma.virtual_addr + 1280);
+	volatile HBA_CMD_TBL *cmdtbl = (volatile HBA_CMD_TBL*)(command_table_dma.virtual_addr);
 	volatile FIS_REG_H2D *fis = (volatile FIS_REG_H2D*)(&cmdtbl->cfis);
 	volatile HBA_PRDT_ENTRY *prdt_base = (volatile HBA_PRDT_ENTRY*)(&cmdtbl->prdt_entry);
 
@@ -642,11 +644,13 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 	uint64_t last_phys_end = 0;
 
 	while (remaining_bytes > 0) {
+		
 		uint64_t page_offset = current_vaddr & 0xFFFU;
 		uint64_t bytes_to_page_end = 0x1000U - page_offset;
 		uint64_t bytes_this_step = MIN(bytes_to_page_end, remaining_bytes);
 
 		uint64_t current_paddr = vmm_get_physical_from_virtual(current_vaddr);
+		LOG_D("Adding %lu bytes this step to PRDT.\n", bytes_this_step);
 
 		//Check if we must flush the active PRDT entry. Happens if no contiguous between chunks.
 		if ((chunk_bytes == 0) || (current_paddr != last_phys_end)) {
@@ -659,6 +663,7 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 				prdt->i = 0;
 				
 				prdt_index++;
+				LOG_D("Had to flush PRDT due to no contiguity. PRDT has dba: %u, dbau: %u, dbc: %u.\n", prdt->dba, prdt->dbau, prdt->dbc);
 			}
 
 			//Start a new PRDT chunk
@@ -684,12 +689,13 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 		prdt->i = 0;
 
 		prdt_index++;
+		LOG_D("Flushed trailing PRDT. PRDT has dba: %x, dbau: %x, dbc: %u.\n", prdt->dba, prdt->dbau, prdt->dbc);
 	}
 
 	//Prepare our header
 	command_header->cfl = 5;
 	command_header->w = 0;
-	command_header->prdtl = 1;
+	command_header->prdtl = prdt_index;
 	command_header->prdbc = 0;
 
 	//Prep the FIS
@@ -711,6 +717,7 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 		fis->lba4 = (uint8_t)((lba >> 32) & 0xFF); //40 bits
 		fis->lba5 = (uint8_t)((lba >> 40) & 0xFF); //48 bits
 		fis->device = (1 << 6);
+		LOG_D("Prepared read request on LBA48.\n");
 	} 
 	else {
 		//Use legacy 28-bit read dma and fis structure
@@ -723,6 +730,7 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 		fis->lba2 = (uint8_t)((lba >> 16) & 0xFF); //24 bits
 		fis->device = (uint8_t)((lba >> 24) & 0xF); //28 bits, highest 4 bits if lba goes in bottom 4 bits of device (0-3)
 		fis->device |= (1 << 6);
+		LOG_D("Prepared read request on legacy LBA28.\n");
 	}
 
 	//Fire the command.
@@ -744,6 +752,7 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 		return -EIO;
 	} 
 
+	LOG_D("Read finished with %lu bytes read.\n", command_header->prdbc);
 	__asm__ volatile ("lfence" ::: "memory");
 
 	return 0;

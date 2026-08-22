@@ -73,10 +73,11 @@ void _start(boot_info *BootInfo) {
     pci_find_device(0x01, 0x06, &ahci_cont);
     ahci_init_device(&ahci_cont);
 
-    uint64_t *read_buffer = kmalloc(512);
-    lbd_read(0, 1, 1, (void*)read_buffer);
+    uint64_t *read_buffer = kmalloc(1024);
+    uint64_t *unaligned_read_buffer = (uint64_t*)((uint8_t*)read_buffer + 1);
+    lbd_read(0, 1, 1, (void*)(unaligned_read_buffer));
 
-    if (*read_buffer == 0x5452415020494645) {
+    if (*unaligned_read_buffer == 0x5452415020494645) {
         LOG_I("Read LBA 1 success!\n");
     }
 

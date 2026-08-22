@@ -33,15 +33,16 @@ int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     uint64_t buffer_vaddr = (uint64_t)buffer;
 
     //Now, buffer check. We wanna check to see if it is a legal address, and contains WRITEABLE flag.
-    if (!vmm_pin_pages(buffer_vaddr, count * logical_drive->device_info.logical_sector_size_bytes, 1)) {
+    if (vmm_pin_pages(buffer_vaddr, count * logical_drive->device_info.logical_sector_size_bytes, 1)) {
         LOG_E("Invalid buffer information!\n");
+        return -EINVAL;
     }
 
     //Check alignment of the v_address. If not even (word aligned) then we need to use bounce buffers.
     if ((uint64_t)buffer & 1ULL) {
-        LOG_W("User buffer is not word aligned. Falling back to bounce buffer.\n");
         //We need to request the pages. In case of physical fragmentation, we ask in 1 pageat a time. To reduce delays, bypass the vma. Ask pmm directly.
-        size_t page_count = count * logical_drive->device_info.logical_sector_size_bytes / 0x1000;
+        size_t page_count = (count * logical_drive->device_info.logical_sector_size_bytes + 0xFFF) / 0x1000;
+        LOG_W("User buffer is not word aligned. Falling back to bounce buffer of size %lu pages.\n", page_count);
         dma_scatter_block_t scatter_block = kallocate_scatter_dma(page_count);
         if (!scatter_block.virtual_addr) {
             LOG_E("Could not allocate scattered bounce buffer. Out of memory.\n");
@@ -65,8 +66,8 @@ int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     }
 
     else {
-        return logical_drive->driver_api->read(logical_drive, lba, count, buffer);
         LOG_D("Read finished.\n");
+        return logical_drive->driver_api->read(logical_drive, lba, count, buffer);
     }
 
     
