@@ -1,13 +1,15 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
+#define CURRENT_LOG_SYS LOG_SYS_VMM
+#define CURRENT_LOG_NAME "VMM"
 
 #include "../include/memory/memory.h"
 #include "../include/kernel/boot_info.h"
 #include "../include/common/stdtypes.h"
-#include "../include/drivers/serial.h"
 #include "../include/common/stdstr.h"
 #include "../include/kernel/panic.h"
 #include "../include/kernel/errno.h"
+#include "../include/common/logging.h"
 
 static page_table *PML4; 
 
@@ -28,6 +30,7 @@ void vmm_init(uint64_t bi_v) {
  */
 int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags) {
     if (!pages) return -EINVAL;
+    LOG_D("Mapping virtual %lx to physical %lx over %lu pages with VMM flags %lx.\n", v_addr, p_addr, pages, flags);
     for (uint64_t i = 0; i < pages; i++) {
         uint16_t PML4_index = (v_addr >> 39) & 0x1FF;
         uint16_t PDPT_index = (v_addr >> 30) & 0x1FF;
@@ -38,6 +41,13 @@ int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags) {
     
         //Here, we need to check if this will be a huge page or not.
         if (flags & 0x10) {
+            //Check if already mapped. If so, throw an error.
+            if (PD->entries[PD_index].bits.present) {
+                uint64_t prev_phys = PD->entries[PD_index].bits.physical_address << 12;
+                LOG_E("Virtual address %lx is already mapped to physical address %lx! VMM will not overwrite mapping without explicit unmap call.\n", v_addr, prev_phys);
+                return -EEXIST;
+            }
+            LOG_D("Mapped as huge page at indeces PML4: %lu, PDPT: %lu, PD: %lu.\n", PML4_index, PDPT_index, PD_index);
             //We assume the VMA or other caller will have the addresses alligned to the 2MB mark.
             PD->entries[PD_index].bits.present = 1;
             PD->entries[PD_index].bits.writeable = (flags & 0x1);
@@ -59,6 +69,14 @@ int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags) {
 
         uint64_t PT_index = (v_addr >> 12) & 0x1FF;
 
+        //Check if already mapped. If so, throw an error.
+        if (PT->entries[PT_index].bits.present) {
+            uint64_t prev_phys = PT->entries[PT_index].bits.physical_address << 12;
+            LOG_E("Virtual address %lx is already mapped to physical address %lx! VMM will not overwrite mapping without explicit unmap call.\n", v_addr, prev_phys);
+            return -EEXIST;
+        }
+
+        LOG_D("Mapped at indeces PML4: %lu, PDPT: %lu, PD: %lu, PT: %lu.\n", PML4_index, PDPT_index, PD_index, PT_index);
         PT->entries[PT_index].bits.present = 1;
         PT->entries[PT_index].bits.writeable = (flags & 0x1);
         PT->entries[PT_index].bits.user_available = (flags & 0x2) >> 1;
@@ -84,6 +102,7 @@ int vmm_map(uint64_t v_addr, uint64_t p_addr, uint64_t pages, uint64_t flags) {
  */
 int vmm_unmap(uint64_t v_addr, uint64_t pages) {
     if (!pages) return -EINVAL;
+    LOG_D("Unmapping virtual address %lx over %lu pages.\n", v_addr, pages);
     for (uint64_t i = 0; i < pages; i++) {
         uint16_t PML4_index = (v_addr >> 39) & 0x1FF;
         uint16_t PDPT_index = (v_addr >> 30) & 0x1FF;
@@ -139,28 +158,23 @@ uint64_t vmm_get_physical_from_virtual(uint64_t v_addr) {
 }
 
 void vmm_page_fault_callback(interrupt_frame *iframe) {
-    char buffer[19];
-
     uint64_t invalid_address = iframe->cr2;
     uint8_t is_present = iframe->error_code & 0x1;
     uint8_t is_write = iframe->error_code & 0x2;
     uint8_t is_user = iframe->error_code & 0x4;
 
+    LOG_D("Received call from interrupt handler for address %lx.\n", invalid_address);
+
     //Here, we will handle demand paging.
     if (!is_present) {
+        LOG_D("Marked as not present. Handling through demand paging.\n");
         //We let the vma handle it. If it returns 0, then we assume it was a valid request and return to the proper flow.
         if (!vma_demand_paging(invalid_address)) return;
-        serial_puts("Demand paging returns invalid address, continuing fault handler...\n");
+        LOG_D("Demand paging returns invalid address, continuing fault handler...\n");
     }
 
-    serial_puts("Page fault! Invalid address access at ");
-    ultox(invalid_address, buffer, 19);
-    serial_puts(buffer);
-    serial_puts(" from instruction located at ");
-    ultox(iframe->rip, buffer, 19);
-    serial_puts(buffer);
-    serial_puts(".\n");
-    kernel_panic("Cannot recover from page fault.\n");   
+    LOG_E("True page fault triggered. Cannot recover, panicking!\n");
+    PANIC("Page fault! Invalid address access at %lx from instruction located at %lx.\n", invalid_address, iframe->rip);   
 }
 
 /**
@@ -203,17 +217,24 @@ int vmm_pin_pages(uint64_t v_addr, size_t count, uint8_t write_access) {
     uint64_t start_page = v_addr & ~0xFFFULL;
     uint64_t end_page = (start_page + count - 1) & ~0xFFFULL;
 
+    LOG_D("Pinning pages starting at virtual address %lx over %lu bytes. Start page address: %lx, end page address: %lx.\n", v_addr, count, start_page, end_page);
+
     for (uint64_t page = start_page; page <= end_page; page += 0x1000) {
         page_table_entry *pte = vmm_get_pte(page);
 
         //Handle demand/lazy paging.
         if (!pte->bits.present) {
-            if (!vma_demand_paging(page)) return -EFAULT;
+            LOG_D("Page not present, using demand paging.\n");
+            if (!vma_demand_paging(page)) {
+                LOG_E("Demand paging returns that virtual address %lx is invalid. Page pin failed.\n", page);
+                return -EFAULT;
+            }
             pte = vmm_get_pte(page); //Get updated page table entry.
         }
 
         //Check to see if the page is even mapped as a writeable page.
         if (write_access && !pte->bits.writeable) {
+            LOG_E("Virtual address %lx is not writeable, while caller asked for write_access.\n", page);
             return -EFAULT;
         }
     }
