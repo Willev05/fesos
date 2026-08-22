@@ -1,7 +1,11 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
+#define CURRENT_LOG_SYS LOG_SYS_BUS
+#define CURRENT_LOG_NAME "PCI"
+
 #include "../include/buses/pci.h"
 #include "../include/drivers/io.h"
+#include "../include/common/logging.h"
 
 typedef uint32_t (*pci_read_func_t)(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint8_t size);
 typedef void (*pci_write_func_t)(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint32_t value, uint8_t size);
@@ -61,9 +65,11 @@ int pci_find_device(uint8_t class_code, uint8_t subclass, pci_device_t *pci_devi
 
                 //If the vendor is all ones, then there is no device at this address.s
                 if (header.vendor_id == 0xFFFF) continue;
+                LOG_D("Found a PCI device at address bus %u, device %u, function %u.\n", bus, device, function);
 
                 //Check to see if we found a device matching the description.
                 if (header.class_code == class_code && header.subclass == subclass) {
+                    LOG_D("PCI device matching class_code %u and subclass %u found.\n", class_code, subclass);
                     pci_device->bus = (uint8_t)bus;
                     pci_device->device = device;
                     pci_device->function = function;
@@ -88,6 +94,7 @@ int pci_find_device(uint8_t class_code, uint8_t subclass, pci_device_t *pci_devi
             }
         }
     }
+    LOG_E("No PCI device matching class_code %u and subclass %u found.\n", class_code, subclass);
     return 0;
 }
 
