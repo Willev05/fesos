@@ -253,7 +253,7 @@ static const lbd_driver_api_t ahci_api = {
 };
 
 int ahci_init_device(pci_device_t *pci_device) {
-	LOG_I("Found controller at bus %lu, device %lu, function %lu.\n", pci_device->bus, pci_device->device, pci_device->function);
+	LOG_I("Found controller at bus %u, device %u, function %u.\n", (uint32_t)pci_device->bus, (uint32_t)pci_device->device, (uint32_t)pci_device->function);
 
 	//Start with looking at its power state.
 	//Requires us to find it within the capability list.
