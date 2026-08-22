@@ -16,6 +16,7 @@ typedef enum {
     LOG_SYS_PMM = (1 << 1),
     LOG_SYS_VMM = (1 << 2), //Handles VMM and VMA
     LOG_SYS_STORAGE = (1 << 3), // Handles the storage drivers, and LBD.
+    LOG_SYS_KALLOC = (1 << 4), //Handles kmalloc and such functions.
 
     LOG_SYS_NONE = 0,
     LOG_SYS_ALL = 0xFFFFFFFF
