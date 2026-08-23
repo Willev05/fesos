@@ -243,13 +243,14 @@ typedef enum {
 
 static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, void *buffer);
 static int ahci_write(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, const void *buffer);
+static int ahci_flush(lbd_logical_drive_t *logical_drive);
 static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba);
 static void ahci_parse_model_string(uint16_t *id_data);
 
 static const lbd_driver_api_t ahci_api = {
 	.read = ahci_read,
 	.write = ahci_write,
-	.flush = NULL
+	.flush = ahci_flush
 };
 
 int ahci_init_device(pci_device_t *pci_device) {
@@ -644,7 +645,6 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 	uint64_t last_phys_end = 0;
 
 	while (remaining_bytes > 0) {
-		
 		uint64_t page_offset = current_vaddr & 0xFFFU;
 		uint64_t bytes_to_page_end = 0x1000U - page_offset;
 		uint64_t bytes_this_step = MIN(bytes_to_page_end, remaining_bytes);
@@ -759,6 +759,147 @@ static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t 
 }
 
 static int ahci_write(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, const void *buffer) {
+	LOG_D("Received write-request for LBA %lu and %lu sectors.\n", lba, count);
+	ahci_driver_data_t *driver_data = (ahci_driver_data_t*)(logical_drive->driver_data);
+	HBA_MEM *hba = driver_data->hba_mmio;
+	HBA_PORT *port = driver_data->port_mmio;
+	dma_block_t control_dma = driver_data->control_dma;
+	dma_block_t command_table_dma = driver_data->command_tables[0];
+
+	volatile HBA_CMD_HEADER *command_header = (volatile HBA_CMD_HEADER*)control_dma.virtual_addr;
+	volatile HBA_CMD_TBL *cmdtbl = (volatile HBA_CMD_TBL*)(command_table_dma.virtual_addr);
+	volatile FIS_REG_H2D *fis = (volatile FIS_REG_H2D*)(&cmdtbl->cfis);
+	volatile HBA_PRDT_ENTRY *prdt_base = (volatile HBA_PRDT_ENTRY*)(&cmdtbl->prdt_entry);
+
+	//Clear the command table and fist PRDT.
+	volatile_memset(cmdtbl, 0, sizeof(HBA_CMD_TBL));
+
+	//Prepare the PRDTs.
+	//Calculate total transfer size
+	uint64_t remaining_bytes = count * logical_drive->device_info.logical_sector_size_bytes;
+	uint64_t current_vaddr = (uint64_t)buffer;
+
+	uint16_t prdt_index = 0;
+
+	uint64_t chunk_phys_start = 0;
+	uint64_t chunk_bytes = 0;
+	uint64_t last_phys_end = 0;
+
+	while (remaining_bytes > 0) {
+		uint64_t page_offset = current_vaddr & 0xFFFU;
+		uint64_t bytes_to_page_end = 0x1000U - page_offset;
+		uint64_t bytes_this_step = MIN(bytes_to_page_end, remaining_bytes);
+
+		uint64_t current_paddr = vmm_get_physical_from_virtual(current_vaddr);
+		LOG_D("Adding %lu bytes this step to PRDT.\n", bytes_this_step);
+
+		//Check if we must flush the active PRDT entry. Happens if no contiguous between chunks.
+		if ((chunk_bytes == 0) || (current_paddr != last_phys_end)) {
+			//Flush previous chunk to PRDT if one exists
+			if (chunk_bytes > 0) {
+				volatile HBA_PRDT_ENTRY *prdt = prdt_base + prdt_index;
+				prdt->dba = (uint32_t)(chunk_phys_start & 0xFFFFFFFFU);
+				prdt->dbau = (uint32_t)(chunk_phys_start >> 32);
+				prdt->dbc = (uint32_t)(chunk_bytes - 1);
+				prdt->i = 0;
+				
+				prdt_index++;
+				LOG_D("Had to flush PRDT due to no contiguity. PRDT has dba: %u, dbau: %u, dbc: %u.\n", prdt->dba, prdt->dbau, prdt->dbc);
+			}
+
+			//Start a new PRDT chunk
+			chunk_phys_start = current_paddr;
+			chunk_bytes = 0;
+		}
+
+		//Accumulate chunk
+		chunk_bytes += bytes_this_step;
+		last_phys_end = current_paddr + bytes_this_step;
+
+		//Advance virtual state
+		current_vaddr += bytes_this_step;
+		remaining_bytes -= bytes_this_step;
+	}
+
+	//Flush final trailing PRDT chunk
+	if (chunk_bytes > 0) {
+		volatile HBA_PRDT_ENTRY *prdt = prdt_base + prdt_index;
+		prdt->dba = (uint32_t)(chunk_phys_start & 0xFFFFFFFFU);
+		prdt->dbau = (uint32_t)(chunk_phys_start >> 32);
+		prdt->dbc = (uint32_t)(chunk_bytes - 1);
+		prdt->i = 0;
+
+		prdt_index++;
+		LOG_D("Flushed trailing PRDT. PRDT has dba: %x, dbau: %x, dbc: %u.\n", prdt->dba, prdt->dbau, prdt->dbc);
+	}
+
+	//Prepare our header
+	command_header->cfl = 5;
+	command_header->w = 1;
+	command_header->prdtl = prdt_index;
+	command_header->prdbc = 0;
+
+	//Prep the FIS
+	fis->fis_type = FIS_TYPE_REG_H2D;
+	fis->c = 1;
+
+	//Check to see if we have the lba 48 support.
+	if (driver_data->lba48_support) {
+		fis->command = 0x35;
+		fis->countl = (uint8_t)(count & 0xFF);
+		fis->counth = (uint8_t)((count >> 8) & 0xFF);
+
+		//Now the new address
+		fis->lba0 = (uint8_t)(lba & 0xFF); //8 bits
+		fis->lba1 = (uint8_t)((lba >> 8) & 0xFF); //16 bits
+		fis->lba2 = (uint8_t)((lba >> 16) & 0xFF); //24 bits
+		fis->lba3 = (uint8_t)((lba >> 24) & 0xFF); //32 bits
+		fis->lba4 = (uint8_t)((lba >> 32) & 0xFF); //40 bits
+		fis->lba5 = (uint8_t)((lba >> 40) & 0xFF); //48 bits
+		fis->device = (1 << 6);
+		LOG_D("Prepared write request on LBA48.\n");
+	} 
+	else {
+		//Use legacy 28-bit read dma and fis structure
+		fis->command = 0xCA;
+		fis->countl = (uint8_t)(count & 0xFF); //256 sectors = 0x00
+
+		//Now, the old address
+		fis->lba0 = (uint8_t)(lba & 0xFF); //8 bits
+		fis->lba1 = (uint8_t)((lba >> 8) & 0xFF); //16 bits
+		fis->lba2 = (uint8_t)((lba >> 16) & 0xFF); //24 bits
+		fis->device = (uint8_t)((lba >> 24) & 0xF); //28 bits, highest 4 bits if lba goes in bottom 4 bits of device (0-3)
+		fis->device |= (1 << 6);
+		LOG_D("Prepared write request on legacy LBA28.\n");
+	}
+
+	__asm__ volatile ("sfence" ::: "memory");
+
+	//Fire the command.
+	port->ci |= 1U;
+
+	//Wait for the bit to clear.
+	uint64_t start_ms = tsc_timer_get_ms();
+	while ((port->ci & 0x1U) && (tsc_timer_get_ms() - start_ms < 10000)) 
+	{
+		//Task File Error Check [1]
+		if (port->tfd & 0x01) { 
+			LOG_E("Port %u: Write command rejected by disk status engine!\n", driver_data->port_num);
+			return -EIO;
+    	}
+		tsc_sleep_ms(1);
+	}
+	if (port->ci & 0x1U) {
+		LOG_E("Port %u: Timed out after sending write request.\n", driver_data->port_num);
+		return -EIO;
+	} 
+
+	LOG_D("Write finished with %lu bytes written.\n", command_header->prdbc);
+
+	return 0;
+}
+
+static int ahci_flush(lbd_logical_drive_t *logical_drive) {
 	return -EPERM;
 }
 

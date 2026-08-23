@@ -224,6 +224,11 @@ int vmm_pin_pages(uint64_t v_addr, size_t count, uint8_t write_access) {
 
         //Handle demand/lazy paging.
         if (!pte->bits.present) {
+            if (!write_access) {
+                //This means it should be a read from this buffer. If not all physical pages exists, then invalid since garbage data.
+                LOG_E("Page at address %lx not present in table. This means no physical frame exists and page is garbage, which is invalid for reads.\n", page);
+                return -EFAULT;
+            }
             LOG_D("Page not present, using demand paging.\n");
             if (!vma_demand_paging(page)) {
                 LOG_E("Demand paging returns that virtual address %lx is invalid. Page pin failed.\n", page);
