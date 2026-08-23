@@ -124,3 +124,13 @@ int lbd_write(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
         return write_errno;
     }
 }
+
+int lbd_flush(uint8_t drive_no) {
+    lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
+    LOG_D("Processing flush request for drive %u.\n", drive_no);
+    //Check if the no is valid
+    if (!logical_drive) return -EINVAL;
+    int flush_errno = logical_drive->driver_api->flush(logical_drive);
+    LOG_D("Flush request completed.\n");
+    return flush_errno;
+}

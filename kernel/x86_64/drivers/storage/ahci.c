@@ -900,7 +900,64 @@ static int ahci_write(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t
 }
 
 static int ahci_flush(lbd_logical_drive_t *logical_drive) {
-	return -EPERM;
+	LOG_D("Received flush-request.\n");
+	ahci_driver_data_t *driver_data = (ahci_driver_data_t*)(logical_drive->driver_data);
+	HBA_MEM *hba = driver_data->hba_mmio;
+	HBA_PORT *port = driver_data->port_mmio;
+	dma_block_t control_dma = driver_data->control_dma;
+	dma_block_t command_table_dma = driver_data->command_tables[0];
+
+	volatile HBA_CMD_HEADER *command_header = (volatile HBA_CMD_HEADER*)control_dma.virtual_addr;
+	volatile HBA_CMD_TBL *cmdtbl = (volatile HBA_CMD_TBL*)(command_table_dma.virtual_addr);
+	volatile FIS_REG_H2D *fis = (volatile FIS_REG_H2D*)(&cmdtbl->cfis);
+	volatile HBA_PRDT_ENTRY *prdt_base = (volatile HBA_PRDT_ENTRY*)(&cmdtbl->prdt_entry);
+
+	//Clear the command table and fist PRDT.
+	volatile_memset(cmdtbl, 0, sizeof(HBA_CMD_TBL));
+
+	//Prepare the header.
+	command_header->cfl = 5;
+	command_header->w = 0;
+	command_header->prdtl = 0;
+	command_header->prdbc = 0;
+
+	//Prepare the FIS.
+	fis->fis_type = FIS_TYPE_REG_H2D;
+	fis->c = 1;
+	fis->device = 1 << 6; //LBA mode.
+
+	//Do the different version depending on LBA48 support.
+	if (driver_data->lba48_support) {
+		fis->command = 0xEA;
+		LOG_D("Prepared flush on LBA48 mode.\n");
+	}
+	else {
+		fis->command = 0xE7;
+		LOG_D("Prepared flush on LBA28 mode.\n");
+	}
+
+	//Fire the command.
+	port->ci |= 1U;
+
+	//Wait for the bit to clear.
+	uint64_t start_ms = tsc_timer_get_ms();
+	while ((port->ci & 0x1U) && (tsc_timer_get_ms() - start_ms < 10000)) 
+	{
+		//Task File Error Check [1]
+		if (port->tfd & 0x01) { 
+			LOG_E("Port %u: Flush command rejected by disk status engine!\n", driver_data->port_num);
+			return -EIO;
+    	}
+		tsc_sleep_ms(1);
+	}
+	if (port->ci & 0x1U) {
+		LOG_E("Port %u: Timed out after sending flush request.\n", driver_data->port_num);
+		return -EIO;
+	} 
+
+	LOG_D("Flush complete with %lu bytes flushed.\n", command_header->prdbc);
+
+	return 0;
 }
 
 //Due to ATA returning in word-size registers. This means "AB" stored in a reg to become "BA" due to CPU low-endian.
