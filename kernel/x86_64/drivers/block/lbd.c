@@ -3,6 +3,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #define CURRENT_LOG_SYS LOG_SYS_STORAGE
 #define CURRENT_LOG_NAME "LBD"
+#define LOGICAL_DRIVE_ARRAY_SIZE 256
 
 #include "../../include/drivers/block/lbd.h"
 #include "../../include/common/logging.h"
@@ -10,10 +11,13 @@
 #include "../../include/memory/memory.h"
 #include "../../include/common/stdstr.h"
 
-static lbd_logical_drive_t *lbd_drives[256];
+static lbd_logical_drive_t *lbd_drives[LOGICAL_DRIVE_ARRAY_SIZE];
 static uint8_t next_drive_num = 0;
 
 void lbd_register_drive(lbd_logical_drive_t *logical_drive) {
+    if (next_drive_num >= LOGICAL_DRIVE_ARRAY_SIZE) {
+        LOG_E("Unable to register new drive. Array is full.\n");
+    }
     uint8_t drive_num = next_drive_num++;
     logical_drive->drive_no = drive_num;
     lbd_drives[drive_num] = logical_drive;
@@ -24,11 +28,20 @@ int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
     LOG_D("Processing read request for drive %u.\n", drive_no);
     //Check if the no is valid
-    if (!logical_drive) return -EINVAL;
+    if (!logical_drive) {
+        LOG_E("Invalid drive number: %u.\n", drive_no);
+        return -EINVAL;
+    } 
     //Check if the count is valid
-    if (count > logical_drive->device_info.max_sectors_per_transfer) return -EINVAL;
-    //Check if the lba is valid
-    if (lba >= logical_drive->device_info.total_sectors) return -EINVAL;
+    if (count > logical_drive->device_info.max_sectors_per_transfer) {
+        LOG_E("Count too high for drive! Requested read of %lu sectors, while drive supports %lu.\n", count, logical_drive->device_info.max_sectors_per_transfer);
+        return -EINVAL;
+    } 
+    //Check if the lba + count goes past the sector count
+    if (lba + count >= logical_drive->device_info.total_sectors) {
+        LOG_E("Invalid LBA! Requested read starting at LBA %lu over %lu sectors, going outside the bounds of the drive's sector count of %lu.\n", lba, count, logical_drive->device_info.total_sectors);
+        return -EINVAL;
+    } 
 
     uint64_t buffer_vaddr = (uint64_t)buffer;
 
@@ -76,11 +89,25 @@ int lbd_write(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
     LOG_D("Processing write request for drive %u.\n", drive_no);
     //Check if the no is valid
-    if (!logical_drive) return -EINVAL;
+    if (!logical_drive) {
+        LOG_E("Invalid drive number: %u.\n", drive_no);
+        return -EINVAL;
+    } 
     //Check if the count is valid
-    if (count > logical_drive->device_info.max_sectors_per_transfer) return -EINVAL;
-    //Check if the lba is valid
-    if (lba >= logical_drive->device_info.total_sectors) return -EINVAL;
+    if (count > logical_drive->device_info.max_sectors_per_transfer) {
+        LOG_E("Count too high for drive! Requested write of %lu sectors, while drive supports %lu.\n", count, logical_drive->device_info.max_sectors_per_transfer);
+        return -EINVAL;
+    } 
+    //Check if the lba + count goes past the sector count
+    if (lba + count >= logical_drive->device_info.total_sectors) {
+        LOG_E("Invalid LBA! Requested write starting at LBA %lu over %lu sectors, going outside the bounds of the drive's sector count of %lu.\n", lba, count, logical_drive->device_info.total_sectors);
+        return -EINVAL;
+    } 
+    //Check if drive even allows writes.
+    if (!(logical_drive->device_info.flags & LBD_FLAG_W)) {
+        LOG_E("Write operation not permited on drive %u.\n", drive_no);
+        return -EPERM;
+    }
 
     uint64_t buffer_vaddr = (uint64_t)buffer;
 
@@ -129,7 +156,16 @@ int lbd_flush(uint8_t drive_no) {
     lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
     LOG_D("Processing flush request for drive %u.\n", drive_no);
     //Check if the no is valid
-    if (!logical_drive) return -EINVAL;
+    if (!logical_drive) {
+        LOG_E("Invalid drive number: %u.\n", drive_no);
+        return -EINVAL;
+    } 
+    //Check if drive even allows flushes.
+    if (!(logical_drive->device_info.flags & LBD_FLAG_F)) {
+        LOG_E("FLush operation not permited on drive %u.\n", drive_no);
+        return -EPERM;
+    }
+
     int flush_errno = logical_drive->driver_api->flush(logical_drive);
     LOG_D("Flush request completed.\n");
     return flush_errno;
