@@ -3,11 +3,10 @@
 #define CURRENT_LOG_SYS LOG_SYS_INTERRUPT
 #define CURRENT_LOG_NAME "ISR"
 
-#include "../include/kernel/idt.h"
-#include "../include/kernel/isr.h"
-#include "../include/drivers/serial.h"
-#include "../include/common/logging.h"
-#include "../include/kernel/panic.h"
+#include <kernel/idt.h>
+#include <kernel/isr.h>
+#include <common/logging.h>
+#include <kernel/panic.h>
 
 static isr_t interrupt_handler_table[256];
 

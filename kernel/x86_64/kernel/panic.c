@@ -1,9 +1,9 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "../include/kernel/panic.h"
-#include "../include/common/printf.h"
-#include "../include/kernel/time.h"
+#include <kernel/panic.h>
+#include <common/printf.h>
+#include <kernel/time.h>
 
 void kernel_panic(const char *file, int line, const char *msg, ...) {
     //Dump the interrupt frame registers.

@@ -5,11 +5,11 @@
 #define CURRENT_LOG_NAME "LBD"
 #define LOGICAL_DRIVE_ARRAY_SIZE 256
 
-#include "../../include/drivers/block/lbd.h"
-#include "../../include/common/logging.h"
-#include "../../include/kernel/errno.h"
-#include "../../include/memory/memory.h"
-#include "../../include/common/stdstr.h"
+#include <drivers/block/lbd.h>
+#include <common/logging.h>
+#include <kernel/errno.h>
+#include <memory/memory.h>
+#include <common/stdstr.h>
 
 static lbd_logical_drive_t *lbd_drives[LOGICAL_DRIVE_ARRAY_SIZE];
 static uint8_t next_drive_num = 0;

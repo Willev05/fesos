@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
 #pragma once
-#include "vmm.h"
-#include "pmm.h"
-#include "vma.h"
-#include "kmalloc.h"
+#include <memory/vmm.h>
+#include <memory/pmm.h>
+#include <memory/vma.h>
+#include <memory/kmalloc.h>

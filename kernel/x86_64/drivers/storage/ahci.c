@@ -7,15 +7,14 @@
 #define CURRENT_LOG_SYS LOG_SYS_STORAGE
 #define CURRENT_LOG_NAME "AHCI"
 
-#include "../../include/buses/pci.h"
-#include "../../include/memory/kmalloc.h"
-#include "../../include/kernel/time.h"
-#include "../../include/kernel/errno.h"
-#include "../../include/common/stdstr.h"
-#include "../../include/drivers/block/lbd.h"
-#include "../../include/common/math.h"
-#include "../../include/memory/memory.h"
-#include "../../include/common/logging.h"
+#include <buses/pci.h>
+#include <kernel/time.h>
+#include <kernel/errno.h>
+#include <common/stdstr.h>
+#include <drivers/block/lbd.h>
+#include <common/math.h>
+#include <memory/memory.h>
+#include <common/logging.h>
 
 typedef volatile struct tagHBA_PORT
 {

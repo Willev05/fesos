@@ -3,7 +3,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #pragma once
 #include <stdint.h>
-#include "../drivers/io.h"
+#include <drivers/io.h>
 
 void tsc_timer_init();
 uint64_t tsc_timer_get_ms();

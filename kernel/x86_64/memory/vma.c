@@ -3,13 +3,13 @@
 #define CURRENT_LOG_SYS LOG_SYS_VMM
 #define CURRENT_LOG_NAME "VMA"
 
-#include "../include/memory/vma.h"
-#include "../include/memory/vmm.h"
-#include "../include/memory/pmm.h"
-#include "../include/common/math.h"
-#include "../include/common/stdtypes.h"
-#include "../include/common/printf.h"
-#include "../include/common/logging.h"
+#include <memory/vma.h>
+#include <memory/vmm.h>
+#include <memory/pmm.h>
+#include <common/math.h>
+#include <common/stdtypes.h>
+#include <common/printf.h>
+#include <common/logging.h>
 
 #define MINIMUM_AVAILABLE_NODES 5
 

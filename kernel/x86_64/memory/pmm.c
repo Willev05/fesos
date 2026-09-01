@@ -3,13 +3,13 @@
 #define CURRENT_LOG_SYS LOG_SYS_PMM
 #define CURRENT_LOG_NAME "PMM"
 
-#include "../include/memory/pmm.h"
-#include "../include/memory/vmm.h"
-#include "../include/common/math.h"
-#include "../include/kernel/boot_info.h"
-#include "../include/common/stdtypes.h"
-#include "../include/common/logging.h"
-#include "../include/kernel/panic.h"
+#include <memory/pmm.h>
+#include <memory/vmm.h>
+#include <common/math.h>
+#include <kernel/boot_info.h>
+#include <common/stdtypes.h>
+#include <common/logging.h>
+#include <kernel/panic.h>
 
 static volatile uint8_t *bitmap;
 static uint64_t bitmap_size_bytes;
@@ -107,17 +107,18 @@ void *pmm_allocate_frames(uint64_t count, uint64_t alignment) {
 
 void pmm_free_frames(void *start_address, uint64_t count) {
     if (!count) return; 
+    uint64_t final_frame = (uint64_t)start_address / 4096 + count;
     LOG_D("Freeing %lu frames starting at physical address %lx.\n", count, (uint64_t)start_address);
-    for (uint64_t i = (uint64_t)start_address / 4096; i < count; count++) {
-        //Need to check if the frames to free are even legal.
-        if (i >= bitmap_size_frames) {
-            LOG_E("Illegal memory free request! Attempted to free frame %lu, whilst max frame is %lu. Panicking!\n", i, bitmap_size_frames - 1);
-            kernel_panic("PMM: Invalid physical address out of range.\n");
-        }
+    //Need to check if the frames to free are even legal.
+    if (final_frame > bitmap_size_frames) {
+        LOG_E("Illegal memory free request! Attempted to free frame window including %lu, whilst max frame is %lu. Panicking!\n", final_frame - 1, bitmap_size_frames - 1);
+        PANIC("PMM: Invalid physical address out of range. Cannot free up to address %lx.\n", (final_frame - 1) * 4096);
+    }
+    for (uint64_t i = (uint64_t)start_address / 4096; i < final_frame; i++) {
         //Also, check if already free. If so, double free and something is corrupted.
         if (!get_bitmap_bit(i)) {
             LOG_E("Illegal memory free request! Attempted to free frame %lu, whilst frame is already free. (double free)\n", i);
-            kernel_panic("PMM: Double free detected.\n");
+            PANIC("PMM: Double free detected on frame %lu.\n", i);
         }
 
         unset_bitmap_bit(i);

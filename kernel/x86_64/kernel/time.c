@@ -1,7 +1,7 @@
 /* File: time.c */
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-#include "../include/kernel/time.h"
+#include <kernel/time.h>
 
 static uint64_t tsc_tick_per_ms;
 

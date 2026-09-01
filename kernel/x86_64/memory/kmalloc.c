@@ -3,10 +3,9 @@
 #define CURRENT_LOG_SYS LOG_SYS_KALLOC
 #define CURRENT_LOG_NAME "KMALLOC"
 
-#include "../include/memory/kmalloc.h"
-#include "../include/memory/memory.h"
-#include "../include/common/math.h"
-#include "../include/common/logging.h"
+#include <memory/memory.h>
+#include <common/math.h>
+#include <common/logging.h>
 #define SMALL_BUCKET_AGGREGATES 4 //Since 1, 2, 4, 8 will get tossed with 16 byte bucket.
 
 //16, 32, 64, 128, 256, 512, 1024.

@@ -3,8 +3,8 @@
 
 #pragma once
 #include <stdint.h>
-#include "../kernel/isr.h"
-#include "../common/stdtypes.h"
+#include <kernel/isr.h>
+#include <common/stdtypes.h>
 
 #define KERNEL_STACK_PAGE_COUNT 8
 

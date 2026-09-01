@@ -3,7 +3,7 @@
 
 #pragma once
 #include <stdint.h>
-#include "../common/stdtypes.h"
+#include <common/stdtypes.h>
 
 typedef enum {
     STR_SUCCESS = 0,

@@ -1,7 +1,7 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "../include/common/stdstr.h"
+#include <common/stdstr.h>
 
 /**
  * @brief Unsigned long to string.

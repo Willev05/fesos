@@ -1,7 +1,7 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "../include/drivers/io.h"
+#include <drivers/io.h>
 
 #define COM1 0x3F8
 

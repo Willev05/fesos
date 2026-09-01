@@ -2,10 +2,10 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "efi.h"
-#include "../kernel/x86_64/include/kernel/elf.h"
-#include "../kernel/x86_64/include/kernel/boot_info.h"
-#include "../kernel/x86_64/include/memory/vmm.h"
-#include "../kernel/x86_64/include/common/stdtypes.h"
+#include <kernel/elf.h>
+#include <kernel/boot_info.h>
+#include <memory/vmm.h>
+#include <common/stdtypes.h>
 
 uint16_t *EFIAPI to_string(uint64_t input);
 uint16_t *EFIAPI to_string_hex(uint64_t input);

@@ -1,9 +1,9 @@
 /* File: printf.c */
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-#include "../include/common/printf.h"
-#include "../include/drivers/serial.h"
-#include "../include/common/stdstr.h"
+#include <common/printf.h>
+#include <drivers/serial.h>
+#include <common/stdstr.h>
 
 int kprintf(const char* fmt, ...) {
     va_list args;

@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "../common/stdtypes.h"
+#include <common/stdtypes.h>
 
 typedef struct _kmalloc_page_descriptor {
     //The index into the buckets array.

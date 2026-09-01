@@ -1,9 +1,9 @@
 /* File: logging.c */
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-#include "../include/common/logging.h"
-#include "../include/common/printf.h"
-#include "../include/kernel/time.h"
+#include <common/logging.h>
+#include <common/printf.h>
+#include <kernel/time.h>
 
 static uint32_t subsystem_mask = 0;
 

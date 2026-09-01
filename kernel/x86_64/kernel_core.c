@@ -1,21 +1,19 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-#include "include/kernel/elf.h"
-#include "include/kernel/boot_info.h"
-#include "include/drivers/serial.h"
-#include "include/memory/memory.h"
-#include "include/kernel/idt.h"
-#include "include/kernel/gdt.h"
-#include "include/kernel/isr.h"
-#include "include/common/stdtypes.h"
-#include "include/memory/kmalloc.h"
-#include "include/common/printf.h"
-#include "include/kernel/time.h"
-#include "include/common/logging.h"
+#include <kernel/elf.h>
+#include <kernel/boot_info.h>
+#include <drivers/serial.h>
+#include <memory/memory.h>
+#include <kernel/idt.h>
+#include <kernel/gdt.h>
+#include <kernel/isr.h>
+#include <common/stdtypes.h>
+#include <kernel/time.h>
+#include <common/logging.h>
 
-#include "include/buses/pci.h"
-#include "include/drivers/storage/ahci.h"
-#include "include/drivers/block/lbd.h"
+#include <buses/pci.h>
+#include <drivers/storage/ahci.h>
+#include <drivers/block/lbd.h>
 
 uint32_t magic_number = 0xDEADC0DE;
 

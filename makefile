@@ -23,7 +23,7 @@ KERNEL_LD := ld.lld
 AS := nasm
 
 #Flags
-COMMON_CFLAGS := -g -ffreestanding -fno-stack-protector -mno-red-zone -Wall -Wextra
+COMMON_CFLAGS := -g -ffreestanding -fno-stack-protector -mno-red-zone -Wall -Wextra -I./kernel/x86_64/include
 
 BOOT_CFLAGS := $(COMMON_CFLAGS) -fshort-wchar -O2 -target x86_64-unknown-windows-coff
 BOOT_LDFLAGS := /subsystem:efi_application \

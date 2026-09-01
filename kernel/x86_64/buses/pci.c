@@ -3,9 +3,9 @@
 #define CURRENT_LOG_SYS LOG_SYS_BUS
 #define CURRENT_LOG_NAME "PCI"
 
-#include "../include/buses/pci.h"
-#include "../include/drivers/io.h"
-#include "../include/common/logging.h"
+#include <buses/pci.h>
+#include <drivers/io.h>
+#include <common/logging.h>
 
 typedef uint32_t (*pci_read_func_t)(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint8_t size);
 typedef void (*pci_write_func_t)(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint32_t value, uint8_t size);

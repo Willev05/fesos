@@ -1,7 +1,7 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "../include/kernel/idt.h"
+#include <kernel/idt.h>
 
 __attribute__((aligned(16)))
 gate_descriptor idt[256];

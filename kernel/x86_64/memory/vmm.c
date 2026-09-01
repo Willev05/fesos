@@ -3,13 +3,13 @@
 #define CURRENT_LOG_SYS LOG_SYS_VMM
 #define CURRENT_LOG_NAME "VMM"
 
-#include "../include/memory/memory.h"
-#include "../include/kernel/boot_info.h"
-#include "../include/common/stdtypes.h"
-#include "../include/common/stdstr.h"
-#include "../include/kernel/panic.h"
-#include "../include/kernel/errno.h"
-#include "../include/common/logging.h"
+#include <memory/memory.h>
+#include <kernel/boot_info.h>
+#include <common/stdtypes.h>
+#include <common/stdstr.h>
+#include <kernel/panic.h>
+#include <kernel/errno.h>
+#include <common/logging.h>
 
 static page_table *PML4; 
 
