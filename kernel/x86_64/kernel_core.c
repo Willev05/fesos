@@ -10,10 +10,9 @@
 #include <common/stdtypes.h>
 #include <kernel/time.h>
 #include <common/logging.h>
-
 #include <buses/pci.h>
 #include <drivers/storage/ahci.h>
-#include <drivers/block/lbd.h>
+#include <kernel/drivers.h>
 
 uint32_t magic_number = 0xDEADC0DE;
 
@@ -66,10 +65,19 @@ void _start(boot_info *BootInfo) {
     kfree(bf2);
     kfree(page_int);
 
-    //test ahci
-    pci_device_t ahci_cont;
-    pci_find_device(0x01, 0x06, &ahci_cont);
-    ahci_init_device(&ahci_cont);
+    //Kernel early driver init.
+    pci_driver_t pci_driver;
+    //Start by prepping the AHCI driver.
+    pci_driver.name = "Generic AHCI Driver";
+    pci_driver.driver_type = PCI_CLASS_DRIVER;
+    pci_driver.driver_codes.class_driver.class_code = 0x01; //Mass storage
+    pci_driver.driver_codes.class_driver.subclass = 0x06; //Serial ATA
+    pci_driver.driver_codes.class_driver.prog_if = 0x01; //AHCI
+    pci_driver.init = ahci_init_device;
+    drivers_pci_register(pci_driver);
+
+    //Then call the discover to discover PCI devices and bound early drivers.
+    pci_discover();
 
     LOG_I("Hello from the kernel!\n");
 

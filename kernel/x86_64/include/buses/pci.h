@@ -41,8 +41,39 @@ typedef struct {
     uint32_t bars[6];
 } pci_device_t;
 
+typedef enum {
+    PCI_CLASS_DRIVER,
+    PCI_SPECIFIC_DEVICE_DRIVER
+} pci_driver_type_t;
+
+typedef int (* pci_initialize_device_t) (pci_device_t *pci_device);
+
+typedef struct {
+    char *name;
+    pci_driver_type_t driver_type;
+
+    //Uses the proper one depending on the driver_type specified.
+    union {
+        struct {
+            uint8_t  class_code;
+            uint8_t  subclass;
+            uint8_t  prog_if;
+        } class_driver;
+        
+        struct {
+            uint16_t device_id;
+            uint16_t vendor_id;
+        } specific_device_driver;
+    } driver_codes;
+
+    //Driver function pointers.
+    pci_initialize_device_t init;
+} pci_driver_t;
+
 void pci_init();
 void pci_get_header(uint8_t bus, uint8_t device, uint8_t function, pci_header_t *header);
-int pci_find_device(uint8_t class_code, uint8_t subclass, pci_device_t *device);
+int pci_find_device(uint8_t class_code, uint8_t subclass, pci_device_t *device); //Deprecated. Use the new driver register feature.
 uint32_t pci_read_config(pci_device_t *pci_device, uint16_t offset, uint8_t size);
 void pci_write_config(pci_device_t *pci_device, uint16_t offset, uint32_t value, uint8_t size);
+void pci_discover();
+void pci_init_unbound_devices();

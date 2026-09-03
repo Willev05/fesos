@@ -19,6 +19,7 @@ typedef enum {
     LOG_SYS_KALLOC = (1 << 4), //Handles kmalloc and such functions.
     LOG_SYS_BUS = (1 << 5), //Handles buses like PCI.
     LOG_SYS_INTERRUPT = (1 << 6), //Handles interrupt handlers.
+    LOG_SYS_DRIVERS = (1 << 7), //Handles drivers.h and other driver registry systems.
 
     LOG_SYS_NONE = 0,
     LOG_SYS_ALL = 0xFFFFFFFF

@@ -6,6 +6,9 @@
 #include <buses/pci.h>
 #include <drivers/io.h>
 #include <common/logging.h>
+#include <kernel/drivers.h>
+
+#define MAX_PCI_DEVICES 64
 
 typedef uint32_t (*pci_read_func_t)(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint8_t size);
 typedef void (*pci_write_func_t)(uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint32_t value, uint8_t size);
@@ -14,6 +17,14 @@ typedef struct {
     pci_read_func_t read;
     pci_write_func_t write;
 } pci_api_t;
+
+typedef struct {
+    pci_device_t device;
+    pci_driver_t *driver;
+} pci_device_slot_t;
+
+pci_device_slot_t pci_devices[MAX_PCI_DEVICES];
+uint64_t pci_devices_count;
 
 static pci_api_t pci_api;
 
@@ -144,4 +155,102 @@ static void legacy_pci_write(uint8_t bus, uint8_t device, uint8_t function, uint
     if (size == 1) outb(PCI_CONFIG_DATA_PORT_NUMBER + (offset & 0x3), (uint8_t)value);
     if (size == 2) outw(PCI_CONFIG_DATA_PORT_NUMBER + (offset & 0x2), (uint16_t)value);
     outl(PCI_CONFIG_DATA_PORT_NUMBER, value);
+}
+
+/**
+ * @brief Discover pci devices on the bus and bound them to early device drivers if possible.
+ */
+void pci_discover() {
+    //We will loop through all possible bus, device, and function to try and save them all to a local array.
+    for (uint16_t bus = 0; bus < 256; bus++) { //We need uint16_t to actually get above 255, even if bus itself is represented by 8 bits.
+        for (uint8_t device = 0; device < 32; device++) {
+            for (uint8_t function = 0; function < 8; function++) {
+                pci_header_t header;
+                pci_get_header(bus, device, function, &header);
+
+                //If the vendor is all ones, then there is no device at this address.
+                if (header.vendor_id == 0xFFFF) continue;
+                LOG_D("Found a PCI device at address bus %u, device %u, function %u.\n", bus, device, function);
+
+                if (pci_devices_count >= MAX_PCI_DEVICES) {
+                    LOG_E("Unable to finish PCI bus enumeration. Out of space to store PCI device information! (array full)\n");
+                    return;
+                }
+
+                pci_device_t *new_device = &pci_devices[pci_devices_count++].device;
+
+                new_device->bus = (uint8_t)bus;
+                new_device->device = device;
+                new_device->function = function;
+                new_device->device_id = header.device_id;
+                new_device->vendor_id = header.vendor_id;
+                new_device->prog_if = header.prog_if;
+                new_device->class_code = header.class_code;
+                new_device->subclass = header.subclass;
+
+                //We need to loop through the following 5 registers for the bars.
+                for (int i = 0; i < 6; i++) {
+                    new_device->bars[i] = pci_api.read(bus, device, function, 0x10 + i * 0x4, 4);
+                }
+
+                //Check to see if we can assign a driver to this device right away. 
+                for (uint64_t driver_index = 0; driver_index < pci_driver_registry.count; driver_index++) {
+                    pci_driver_t *driver = &pci_driver_registry.drivers[driver_index];
+                    if (driver->driver_type == PCI_SPECIFIC_DEVICE_DRIVER) {
+                        if (driver->driver_codes.specific_device_driver.device_id == header.device_id && driver->driver_codes.specific_device_driver.vendor_id == header.vendor_id) {
+                            //Found device specific driver.
+                            pci_devices[pci_devices_count - 1].driver = driver;
+                            LOG_I("PCI device at address bus %u, device %u, function %u bound to device-specific driver %s.\n", bus, device, function, driver->name);
+                            driver->init(new_device);
+                        }
+                    }
+                    else if (driver->driver_type == PCI_CLASS_DRIVER) {
+                        if (driver->driver_codes.class_driver.class_code == header.class_code && driver->driver_codes.class_driver.subclass == header.subclass && driver->driver_codes.class_driver.prog_if == header.prog_if) {
+                            //Found class driver.
+                            pci_devices[pci_devices_count - 1].driver = driver;
+                            LOG_I("PCI device at address bus %u, device %u, function %u bound to class driver %s.\n", bus, device, function, driver->name);
+                            driver->init(new_device);
+                        }
+                    }
+                }
+
+                //If the device is not multi-function, no need to check the other ones.
+                if (function == 0 && (header.header_type & 0x80)) {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/**
+ * @brief Check the pci devices array for unbound devices and bind them to a driver if possible.
+ */
+void pci_init_unbound_devices() {
+    for (uint64_t device_index = 0; device_index < pci_devices_count; device_index++) {
+        //Skip the device if already bound.
+        if (pci_devices[device_index].driver) continue;
+
+        //If not, then try to find a driver for it.
+        pci_device_t *device = &pci_devices[device_index].device;
+        for (uint64_t driver_index = 0; driver_index < pci_driver_registry.count; driver_index++) {
+            pci_driver_t *driver = &pci_driver_registry.drivers[driver_index];
+            if (driver->driver_type == PCI_SPECIFIC_DEVICE_DRIVER) {
+                if (driver->driver_codes.specific_device_driver.device_id == device->device_id && driver->driver_codes.specific_device_driver.vendor_id == device->vendor_id) {
+                    //Found device specific driver.
+                    pci_devices[device_index].driver = driver;
+                    LOG_I("PCI device at address bus %u, device %u, function %u bound to device-specific driver %s.\n", device->bus, device->device, device->function, driver->name);
+                    driver->init(device);
+                }
+            }
+            else if (driver->driver_type == PCI_CLASS_DRIVER) {
+                if (driver->driver_codes.class_driver.class_code == device->class_code && driver->driver_codes.class_driver.subclass == device->subclass && driver->driver_codes.class_driver.prog_if == device->prog_if) {
+                    //Found class driver.
+                    pci_devices[device_index].driver = driver;
+                    LOG_I("PCI device at address bus %u, device %u, function %u bound to class driver %s.\n", device->bus, device->device, device->function, driver->name);
+                    driver->init(device);
+                }
+            }
+        }
+    }
 }
