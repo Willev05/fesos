@@ -1,11 +1,15 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
+#define CURRENT_LOG_SYS LOG_SYS_VMM
+#define CURRENT_LOG_NAME "VMA"
 
-#include "../include/memory/vma.h"
-#include "../include/memory/vmm.h"
-#include "../include/memory/pmm.h"
-#include "../include/common/math.h"
-#include "../include/common/stdtypes.h"
+#include <memory/vma.h>
+#include <memory/vmm.h>
+#include <memory/pmm.h>
+#include <common/math.h>
+#include <common/stdtypes.h>
+#include <common/printf.h>
+#include <common/logging.h>
 
 #define MINIMUM_AVAILABLE_NODES 5
 
@@ -34,21 +38,31 @@ vm_ds_node *vm_ds_bubble_update_and_balance(vm_ds_node *node);
 vm_ds_node *vm_ds_remove(vm_ds_node *root, vm_ds_node *node_to_remove);
 vm_ds_node *vm_ds_get_node(vm_ds_node *root, uint64_t addr);
 vm_ds_node *vm_ds_find_worst_fit(vm_ds_node *root, uint64_t size);
+vm_ds_node *vm_ds_get_predecessor(vm_ds_node *node);
+vm_ds_node *vm_ds_get_successor(vm_ds_node *node);
+static void vma_print_tree(vm_ds_node *root);
 
-uint8_t vma_demand_paging(uint64_t fault_addr, uint8_t is_user) {
+uint8_t vma_demand_paging(uint64_t fault_addr) {
     //We start by checking if it is user or supervisor that triggered this to search the peoper tree.
     vm_ds_node *node_for_address;
-    if (is_user) node_for_address = NULL; //TODO: Implement when userland exists.
+    if (fault_addr <= 0x00007FFFFFFFFFFF) node_for_address = NULL; //TODO: Implement when userland exists.
     else node_for_address = vm_ds_get_node(kernel_vma_heap_tree_root, fault_addr); //Only kernel heap is tracked by VMA and has demand paging.
 
-    if (!node_for_address) return 1; //Return error that the address is in fact invalid.
-    if (node_for_address->type == VMA_FREE) return 1; //Also return error if the address is still marked as free.
+    if (!node_for_address) {
+        LOG_E("Address %lx is not a valid virtual address in requested tree.\n", fault_addr);
+        return 1; //Return error that the address is in fact invalid.
+    } 
+    if (node_for_address->type != VMA_REGULAR) {
+        LOG_E("Address %lx is not an address type which supports demand paging. (not VMA_REGULAR)\n", fault_addr);
+        return 1; //Also return error if the address is not of demand paging type.
+    } 
     //TODO: Handle file-backed memory.
     //We handle the conventional memory here.
     //We then need to allocate a frame for this.
     uint64_t physical_frame = (uint64_t)pmm_allocate_frames(1, 4096);
     //And then map it to the page this address is part of.
     vmm_map(fault_addr, physical_frame, 1, node_for_address->flags);
+    LOG_D("Demand paging mapped address %lx successfully.\n", fault_addr);
     return 0;
 }
 
@@ -98,7 +112,11 @@ void vma_free_memory_from_utree(uint64_t start_addr) {
 }
 
 void *vma_allocate_memory_from_ktree(uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
-    //We allocate to the heap tree unless it is an MMIO request.
+
+    //We allocate to the heap tree unless it is an MMIO request. When unmanaged, the kernel trees are either MMIO tree or HEAP.
+    if (allocation_type == VMA_UNMANAGED_MAPPING && allocation_backing->unmanaged.tree == VMA_TREE_KMMIO) {
+        return vma_allocate_memory_from_tree(&kernel_vma_mmio_tree_root, size, allocation_type, flags, allocation_backing);
+    }
     if (allocation_type == VMA_HARDWARE_MMIO) {
         return vma_allocate_memory_from_tree(&kernel_vma_mmio_tree_root, size, allocation_type, flags, allocation_backing);
     }
@@ -110,10 +128,21 @@ void *vma_allocate_memory_from_utree(uint64_t size, vm_node_type allocation_type
 }
 
 void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
+    //DEBUG
+    //kprintf("\nTree before allocation:\n");
+    //vma_print_tree(*root);
+    
     //allocation_backing will be copied over, node will NOT point to the specific allocation_backing passed in. NULL can be passed when allocating normal memory.
     if (allocation_type == VMA_FREE) return NULL;
+    LOG_D("Received allocation request of size %lu, type %u, flags %u.\n", size, allocation_type, flags);
     //We need to locate the worst fit for this request.
     vm_ds_node *node_for_request = vm_ds_find_worst_fit(*root, size);
+
+    //NULL check
+    if (!node_for_request) {
+        LOG_E("Could not fulfill request. Find worst fit returned NULL meaning out of contiguous virtual memory in this tree at size %lu.\n", size);
+        return NULL;
+    }
 
     //We will allocate from the start to either the whole block or up to a part.
     if (size == node_for_request->size) {
@@ -136,6 +165,8 @@ void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_ty
         *root = vm_ds_insert(*root, node_for_leftover);
     }
 
+    LOG_D("Found slot starting at address %lx.\n", node_for_request->start_addr);
+
     //Now, we need to do the backing for the virtual memory.
     //Normal memory does not need to be saved in node, since page tables are enough. Lazy paging will use those.
 
@@ -151,13 +182,30 @@ void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_ty
         node_for_request->backing.file.file_ptr = allocation_backing->file.file_ptr;
         node_for_request->backing.file.offset = allocation_backing->file.file_ptr;
     }
+    else if (allocation_type == VMA_UNMANAGED_MAPPING) {
+        //In unmanaged, the VMA will do nothing else and simply hold the address.
+        node_for_request->backing.unmanaged.tree = allocation_backing->unmanaged.tree;
+    }
+    //DEBUG
+    //kprintf("\nTree after allocation:\n");
+    //vma_print_tree(*root);
 
     return (void *)node_for_request->start_addr;
 }
 
 void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
+    //DEBUG
+    //kprintf("\nTree before free:\n");
+    //vma_print_tree(*root);
+
+    LOG_D("Received free request of address %lx.\n", start_addr);
+
     //We first need to find this node from the tree. It needs to be the start_address of the requested block.
     vm_ds_node *node_to_free = vm_ds_get_node(*root, start_addr);
+
+    if (!node_to_free) {
+        LOG_E("No node with address %lx could be found in tree.\n", start_addr);
+    }
 
     //We then need to free the underlying physical memory and invalidate the vmm mapping.
     if (node_to_free->type == VMA_HARDWARE_MMIO) {
@@ -174,16 +222,16 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
         //Then unmap!
         vmm_unmap(node_to_free->start_addr, node_to_free->size / 4096);
     }
+    //UNMANAGED will not require processing by the VMA. It should only reclaim the virtual memory space.
 
     //Now, we need to check to see if the successor and/or predecessor are also "free" to coalesce them.
-    vm_ds_node *successor = node_to_free->right;
-    while (node_to_free->right && successor->left) successor = successor->left;
-    vm_ds_node *predecessor = node_to_free->left;
-    while (node_to_free->left && predecessor->right) predecessor = predecessor->right;
+    vm_ds_node *successor = vm_ds_get_successor(node_to_free);
+    vm_ds_node *predecessor = vm_ds_get_predecessor(node_to_free);
 
     //Now, we have three cases:
     //Case 1: Both pre/suc are free
     if ((successor && successor->type == VMA_FREE) && (predecessor && predecessor->type == VMA_FREE)) {
+        LOG_D("Executing case 1 coalescing.\n");
         //We calculate the new block size, which is all three blocks together.
         uint64_t new_block_size = successor->size + predecessor->size + node_to_free->size;
 
@@ -202,6 +250,7 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     }
     //Case 2: pre is free
     else if (predecessor && predecessor->type == VMA_FREE) {
+        LOG_D("Executing case 2 coalescing.\n");
         //We calculate the new block size, which is both blocks together.
         uint64_t new_block_size = predecessor->size + node_to_free->size;
 
@@ -218,6 +267,7 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     }
     //Case 3: suc is free
     else if (successor && successor->type == VMA_FREE) {
+        LOG_D("Executing case 3 coalescing.\n");
         //We calculate the new block size, which is both blocks together.
         uint64_t new_block_size = successor->size + node_to_free->size;
 
@@ -235,12 +285,17 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     }
     //Case 4: suc/pre are either null and/or not free
     else {
+        LOG_D("Executing case 4 coalescing.\n");
         //We just mark the node as free.
         node_to_free->type = VMA_FREE;
     }
+    //DEBUG
+    //kprintf("\nTree after free:\n");
+    //vma_print_tree(*root);
 }
 
 void replenish_slab_from_tree() {
+    LOG_D("VMA free node list is low, replenishing slab from kheap.\n");
     //We want to get as many nodes that can fit in one page
     uint32_t node_per_page = 4096 / sizeof(vm_ds_node);
     vm_ds_node *start_of_page = (vm_ds_node*)vma_allocate_memory_from_tree(&kernel_vma_heap_tree_root, 4096, VMA_REGULAR, PT_GLOBAL | PT_WRITEABLE | PT_NX, NULL);
@@ -480,8 +535,7 @@ vm_ds_node *vm_ds_remove(vm_ds_node *root, vm_ds_node *node_to_remove) {
     else if (node_to_remove->left && node_to_remove->right) {
         //Complicated one. We need to replace this node with its inorder successor. (Smallest node in right subtree)
         //So, lets start by finding this successor:
-        vm_ds_node *victim_node = node_to_remove->right;
-        while (victim_node->left) victim_node = victim_node->left;
+        vm_ds_node *victim_node = vm_ds_get_successor(node_to_remove);
 
         //Now, we have the victim. This node itself will have to be "deleted" from the tree. It will then be manually added back here.
         //This wont be a infinite recursive loop since the successor will not have a left child.
@@ -524,4 +578,72 @@ vm_ds_node *vm_ds_find_worst_fit(vm_ds_node *root, uint64_t size) {
 
     //A return in case the tree is broken or something.
     return NULL;
+}
+
+vm_ds_node *vm_ds_get_predecessor(vm_ds_node *node) {
+    vm_ds_node *predecessor = NULL;
+
+    if (node->left != NULL) {
+        //Case A: If there is a left child, go left once, then all the way right
+        predecessor = node->left;
+        while (predecessor->right != NULL) {
+            predecessor = predecessor->right;
+        }
+    } else {
+        //Case B: No left child. Walk up the parent chain until you find that the subtree we came from was parent's right child.
+        vm_ds_node *curr = node;
+        vm_ds_node *p = node->parent;
+        while (p != NULL && curr == p->left) {
+            curr = p;
+            p = p->parent;
+        }
+        predecessor = p;
+    }
+
+    return predecessor;
+}
+
+
+vm_ds_node *vm_ds_get_successor(vm_ds_node *node) {
+    vm_ds_node *successor = NULL;
+
+    if (node->right != NULL) {
+        //Case A: If there is a right child, go right once, then all the way left
+        successor = node->right;
+        while (successor->left != NULL) {
+            successor = successor->left;
+        }
+    } else {
+        // Case B: No right child. Walk up the parent chain until you find that the subtree we came from was parent's left child.
+        vm_ds_node *curr = node;
+        vm_ds_node *p = node->parent;
+        while (p != NULL && curr == p->right) {
+            curr = p;
+            p = p->parent;
+        }
+        successor = p;
+    }
+
+    return successor;
+}
+
+static void vma_print_tree(vm_ds_node *root) {
+    //Start with left child.
+    if (root->left) vma_print_tree(root->left);
+
+    //Now, we do the root itself.
+    kprintf("\nNext Node!\n");
+    kprintf("Node address: %lx\n", (uint64_t)root);
+    kprintf("Node parent: %lx\n", (uint64_t)root->parent);
+    kprintf("Node left: %lx\n", (uint64_t)root->left);
+    kprintf("Node right: %lx\n", (uint64_t)root->right);
+    kprintf("Start_address: %lx\n", root->start_addr);
+    kprintf("Size: %lx\n", root->size);
+    kprintf("Type: %u\n", root->type);
+    kprintf("Flags: %lx\n", root->flags);
+    kprintf("Max free slot subtree: %lx\n", root->subtree_max_free_slot);
+    kprintf("Max depth subtree: %lx\n", root->subtree_max_depth);
+
+    //Then right child.
+    if (root->right) vma_print_tree(root->right);
 }

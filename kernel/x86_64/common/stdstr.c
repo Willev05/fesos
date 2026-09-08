@@ -1,8 +1,15 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "../include/common/stdstr.h"
+#include <common/stdstr.h>
 
+/**
+ * @brief Unsigned long to string.
+ * @param number The unsigned long to convert.
+ * @param buffer The provided string buffer to write the number into.
+ * @param size The size of the provided buffer in bytes/chars.
+ * @return STR_SUCCESS if success, STR_ERR_INVALID_ARG if invalid args (string/buffer = null), STR_ERR_BUFFER_TOO_SMALL if provided buffer is too small (will write partial string).
+ */
 int ultoa(uint64_t number, char *buffer, size_t size) {
     //Null buffer check.
     if (buffer == 0) return STR_ERR_INVALID_ARG;
@@ -35,6 +42,13 @@ int ultoa(uint64_t number, char *buffer, size_t size) {
     return STR_SUCCESS;
 }
 
+/**
+ * @brief Unsigned long to hexadecimal string.
+ * @param number The unsigned long to convert.
+ * @param buffer The provided string buffer to write the number in hexadecimal.
+ * @param size The size of the provided buffer in bytes/chars.
+ * @return STR_SUCCESS if success, STR_ERR_INVALID_ARG if invalid args (string/buffer = null), STR_ERR_BUFFER_TOO_SMALL if provided buffer is too small (will write partial string).
+ */
 int ultox(uint64_t number, char *buffer, size_t size) {
     static char hex_chars[] = {
         0x30, //0
@@ -88,7 +102,13 @@ int ultox(uint64_t number, char *buffer, size_t size) {
     return STR_SUCCESS;
 }
 
-//Start inclusive, end exclusive.
+/**
+ * @brief Reverses the provided string over the provided indeces in place.
+ * @param str The string to be reversed.
+ * @param start_index The start bound for the reversal space (inclusive).
+ * @param end_index The end bound for the reversal space (exclusive).
+ * @return STR_SUCCESS on success, STR_ERR_INVALID_ARG if arguments are invalid (string is null).
+ */
 int str_reverse(char *str, size_t start_index, size_t end_index) {
     if (str == NULL) return STR_ERR_INVALID_ARG;
 
@@ -111,4 +131,118 @@ size_t str_len(char *str) {
     size_t len = 0;
     while (str[len++]);
     return len - 1;
+}
+
+/**
+ * @brief Sets the memory at location 'start' to pattern 'pattern' over 'size' bytes.
+ * @param start A pointer to starting memory location.
+ * @param pattern The byte-pattern to repeat throughout the memory area.
+ * @param size The size in bytes of the memory area.
+ * @return The same pointer passed into start.
+ */
+void *memset(void *start, uint8_t pattern, size_t size) {
+    //This fuction will attempt to write the pattern in stacks of 64 bits for most efficiency in C.
+    //We however need to start by applying the pattern to the head until we reach 8-byte alignment.
+    uint8_t *ptr8 = (uint8_t*)start;
+    while (((uint64_t)ptr8 & 0x7) && 0 < size) {
+        *ptr8++ = pattern;
+        size--;
+    }
+
+    //Now, we handle the middle portion, which is the faster 64-bit writes.
+    uint64_t pattern64 = (uint64_t)pattern;
+    pattern64 |= pattern64 << 8;
+    pattern64 |= pattern64 << 16;
+    pattern64 |= pattern64 << 32;
+
+    //The pointer should be alligned now.
+    uint64_t *ptr64 = (uint64_t*)ptr8;
+    while (size >= 8) {
+        *ptr64++ = pattern64;
+        size -= 8;
+    }
+
+    //Lastly, handle the tail, if unaligned.
+    ptr8 = (uint8_t*)ptr64;
+    while (size > 0) {
+        *ptr8++ = pattern;
+        size--;
+    }
+
+    return start;
+}
+
+/**
+ * @brief Sets the volatile memory at location 'start' to pattern 'pattern' over 'size' bytes.
+ * @param start A pointer to starting volatile memory location.
+ * @param pattern The byte-pattern to repeat throughout the memory area.
+ * @param size The size in bytes of the memory area.
+ * @return The same pointer passed into start.
+ */
+void *volatile_memset(volatile void *start, uint8_t pattern, size_t size) {
+    //This fuction will attempt to write the pattern in stacks of 64 bits for most efficiency in C.
+    //We however need to start by applying the pattern to the head until we reach 8-byte alignment.
+    volatile uint8_t *ptr8 = (uint8_t*)start;
+    while (((uint64_t)ptr8 & 0x7) && 0 < size) {
+        *ptr8++ = pattern;
+        size--;
+    }
+
+    //Now, we handle the middle portion, which is the faster 64-bit writes.
+    uint64_t pattern64 = (uint64_t)pattern;
+    pattern64 |= pattern64 << 8;
+    pattern64 |= pattern64 << 16;
+    pattern64 |= pattern64 << 32;
+
+    //The pointer should be alligned now.
+    volatile uint64_t *ptr64 = (uint64_t*)ptr8;
+    while (size >= 8) {
+        *ptr64++ = pattern64;
+        size -= 8;
+    }
+
+    //Lastly, handle the tail, if unaligned.
+    ptr8 = (volatile uint8_t*)ptr64;
+    while (size > 0) {
+        *ptr8++ = pattern;
+        size--;
+    }
+
+    return start;
+}
+
+/**
+ * @brief Copies memory from the source buffer to the destination bufer over `size` bytes.
+ * @param dest The destination buffer.
+ * @param src The source bufferr.
+ * @param size The count of bytes to transfer.
+ * @return The destination buffer.
+ */
+void *memcpy(void *dest, const void *src, size_t size) {
+    uint8_t *dest8 = (uint8_t*)dest;
+    const uint8_t *src8 = (uint8_t*)src8;
+
+    //Reach the 8 byte allignment, at least on the destination. If src and dest do not share the same last 3 bits, there will be slowdowns.
+    while(((uint64_t)dest8 & 0x7) && 0 < size) {
+        *dest8++ = *src8++;
+        size--;
+    }
+
+    //Now, handle the middle, hopefully aligned part.
+    uint64_t *dest64 = (uint64_t*)dest8;
+    uint64_t *src64 = (uint64_t*)src8;
+    while(size >= 8) {
+        *dest64++ = *src64++;
+        size -= 8;
+    }
+
+    //Handle the tail.
+    dest8 = (uint8_t*)dest64;
+    src8 = (uint8_t*)src64;
+    while (size > 0) {
+        *dest8++ = *src8++;
+        size--;
+    }
+
+    return dest;
 }

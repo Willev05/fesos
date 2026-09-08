@@ -1,15 +1,18 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-
-#include "include/kernel/elf.h"
-#include "include/kernel/boot_info.h"
-#include "include/drivers/serial.h"
-#include "include/memory/memory.h"
-#include "include/kernel/idt.h"
-#include "include/kernel/gdt.h"
-#include "include/kernel/isr.h"
-#include "include/common/stdtypes.h"
-#include "include/memory/kmalloc.h"
+#include <kernel/elf.h>
+#include <kernel/boot_info.h>
+#include <drivers/serial.h>
+#include <memory/memory.h>
+#include <kernel/idt.h>
+#include <kernel/gdt.h>
+#include <kernel/isr.h>
+#include <common/stdtypes.h>
+#include <kernel/time.h>
+#include <common/logging.h>
+#include <buses/pci.h>
+#include <drivers/storage/ahci.h>
+#include <kernel/drivers.h>
 
 uint32_t magic_number = 0xDEADC0DE;
 
@@ -25,21 +28,25 @@ void _start(boot_info *BootInfo) {
 
     BootInfo = (boot_info*)((uint64_t)(BootInfo) + DIRECT_MAP_BASE);
 
+    //For debugging, change log subsystems up here.
+    log_enable_subsystem_debug(LOG_SYS_NONE);
+
     serial_init();
     idt_init();
     gdt_init();
-    serial_puts("Finished loading tables (gdt and idt)\n");
+    tsc_timer_init();
+    LOG_I("Finished loading tables (gdt and idt), serial, and tsc timers.\n");
 
     pmm_init((uint64_t)BootInfo);
     vmm_init((uint64_t)BootInfo);
     vma_init();
     isr_register_interrupt_handler(14, vmm_page_fault_callback);
 
-    serial_puts("Finished memory manager init.\n");
+    LOG_I("Finished memory managers init.\n");
 
     kmalloc_init();
 
-    serial_puts("Finished kmalloc init.\n");
+    LOG_I("Finished kmalloc init.\n");
     
     volatile uint64_t *massive_integer = kmalloc(sizeof(uint64_t));
     *massive_integer = 502;
@@ -58,7 +65,21 @@ void _start(boot_info *BootInfo) {
     kfree(bf2);
     kfree(page_int);
 
-    serial_puts("Hello from the kernel!\n");
+    //Kernel early driver init.
+    pci_driver_t pci_driver;
+    //Start by prepping the AHCI driver.
+    pci_driver.name = "Generic AHCI Driver";
+    pci_driver.driver_type = PCI_CLASS_DRIVER;
+    pci_driver.driver_codes.class_driver.class_code = 0x01; //Mass storage
+    pci_driver.driver_codes.class_driver.subclass = 0x06; //Serial ATA
+    pci_driver.driver_codes.class_driver.prog_if = 0x01; //AHCI
+    pci_driver.init = ahci_init_device;
+    drivers_pci_register(pci_driver);
+
+    //Then call the discover to discover PCI devices and bound early drivers.
+    pci_discover();
+
+    LOG_I("Hello from the kernel!\n");
 
     while (1) {
         __asm__("hlt");

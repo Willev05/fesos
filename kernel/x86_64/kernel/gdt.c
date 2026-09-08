@@ -1,7 +1,7 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "../include/kernel/gdt.h"
+#include <kernel/gdt.h>
 
 __attribute__((aligned(8)))
 segment_descriptor gdt[3];

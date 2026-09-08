@@ -10,18 +10,29 @@ typedef enum {
     VMA_FREE,
     VMA_REGULAR,
     VMA_FILE_BACKED,
-    VMA_HARDWARE_MMIO
+    VMA_HARDWARE_MMIO,
+    VMA_UNMANAGED_MAPPING
 } __attribute__((packed)) vm_node_type;
+
+typedef enum {
+    VMA_TREE_KHEAP,
+    VMA_TREE_KMMIO,
+    VMA_TREE_USER
+} vma_unmanaged_tree_t;
 
 typedef union {
     struct {
-            uint64_t file_ptr; //TODO: Fill when vfs is implemented.
-            uint64_t offset;
-        } file;
+        uint64_t file_ptr; //TODO: Fill when vfs is implemented.
+        uint64_t offset;
+    } file;
 
-        struct {
-            uint64_t physical_start; //For MMIO mapping, since it will be physically continuous. Regular mapping will be reversed from walking page tables.
-        } mmio;
+    struct {
+        uint64_t physical_start; //For MMIO mapping, since it will be physically continuous. Regular mapping will be reversed from walking page tables.
+    } mmio;
+
+    struct {
+        vma_unmanaged_tree_t tree;
+    } unmanaged;
 } vma_backing;
 
 //The node in the AVL tree used for the VMA
@@ -51,4 +62,4 @@ void *vma_allocate_memory_from_ktree(uint64_t size, vm_node_type allocation_type
 void *vma_allocate_memory_from_utree(uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing);
 void vma_free_memory_from_ktree(uint64_t start_addr);
 void vma_free_memory_from_utree(uint64_t start_addr);
-uint8_t vma_demand_paging(uint64_t fault_addr, uint8_t is_user);
+uint8_t vma_demand_paging(uint64_t fault_addr);

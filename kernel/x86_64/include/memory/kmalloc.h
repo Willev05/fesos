@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "../common/stdtypes.h"
+#include <common/stdtypes.h>
 
 typedef struct _kmalloc_page_descriptor {
     //The index into the buckets array.
@@ -28,8 +28,29 @@ typedef struct {
     kmalloc_page_descriptor_t *full_page_list;
 } kmalloc_bucket_t;
 
+typedef struct {
+    void* virtual_addr;
+    uint64_t physical_addr;
+    size_t page_count;
+} dma_block_t;
+
+typedef struct {
+    void* virtual_addr;
+    uint64_t *physical_addrs;
+    size_t page_count;
+} dma_scatter_block_t;
+
+typedef enum {
+    MMIO_DEFAULT,
+    MMIO_WRITE_COMBINING
+} mmio_flags_t;
+
 void kmalloc_init();
 void *kmalloc(size_t size);
 void kfree(void *ptr);
-
-void *kzalloc(size_t size);
+void *kmap_mmio(uint64_t physical_address, size_t size, mmio_flags_t mmio_flag);
+dma_block_t kallocate_dma(size_t page_count);
+void kunmap_mmio(void *virtual_address);
+void kfree_dma(dma_block_t block);
+dma_scatter_block_t kallocate_scatter_dma(size_t page_count);
+void kfree_scatter_dma(dma_scatter_block_t block);
