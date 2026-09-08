@@ -18,9 +18,12 @@ The goal of this project is to build a microkernel from first principles.
 
 - [x] UEFI environment setup and boot table parsing
 - [x] Memory allocation systems (physical and virtual) with heap allocator (kmalloc)
+- [x] Simple AHCI Driver (Polling)
+- [x] LBD
 - [ ] Virtual File System (VFS) layout
-- [ ] Basic FAT32 Driver with AHCI Driver
+- [ ] Basic FAT32 Driver
 - [ ] Multitasking & Context Switching (Ring 3 userspace isolation)
+- [ ] Advanced drivers (interrupts)
 - [ ] Porting standard C library headers via custom sysroot stubs
 - [ ] Migration of drivers to userspace for proper microkernel architecture
 
