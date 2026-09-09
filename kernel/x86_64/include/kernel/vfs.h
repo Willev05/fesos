@@ -58,3 +58,4 @@ int vfs_ioctl(vfs_node_t *node, void *args);
 vfs_node_t *vfs_lookup(char *path);
 vfs_node_t *vfs_mount(char *mount_path, vfs_node_t *fs_root);
 int vfs_unmount(char *path);
+void vfs_init();
