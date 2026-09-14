@@ -16,7 +16,7 @@ typedef int (*vfs_read_t)(struct _vfs_node_t *node, size_t offset, size_t size, 
 typedef int (*vfs_write_t)(struct _vfs_node_t *node, size_t offset, size_t size, uint8_t *buffer);
 typedef int (*vfs_close_t)(struct _vfs_node_t *node);
 typedef int (*vfs_open_t)(struct _vfs_node_t *node);
-typedef struct _vfs_node_t *(*vfs_finddir_t)(struct _vfs_node_t *node, char *name);
+typedef struct _vfs_node_t *(*vfs_finddir_t)(struct _vfs_node_t *node, char *name, size_t len);
 typedef int (*vfs_readdir_t)(struct _vfs_node_t *node, uint32_t index, vfs_dirent_t *dirent);
 typedef int (*vfs_create_t)(struct _vfs_node_t *parent, char *name, vfs_node_type_t type);
 typedef int (*vfs_ioctl_t)(struct _vfs_node_t *node, uint32_t command_id, void *args);
@@ -38,6 +38,7 @@ typedef struct _vfs_node_t {
     uint32_t inode;
     vfs_node_type_t type;
     uint32_t ref_count;
+    struct _vfs_node_t *mountpoint;
 
     vfs_ops_t *operations;
 } vfs_node_t;
@@ -55,7 +56,7 @@ int vfs_read(vfs_node_t *node, size_t offset, size_t size, uint8_t *buffer);
 int vfs_write(vfs_node_t *node, size_t offset, size_t size, uint8_t *buffer);
 int vfs_close(vfs_node_t *node);
 int vfs_open(vfs_node_t *node);
-vfs_node_t *vfs_finddir(vfs_node_t *node, char *name);
+vfs_node_t *vfs_finddir(vfs_node_t *node, char *name, size_t len);
 int vfs_readdir(vfs_node_t *node, uint32_t index, vfs_dirent_t *dirent);
 int vfs_create(vfs_node_t *parent, char *name, vfs_node_type_t type);
 int vfs_ioctl(vfs_node_t *node, uint32_t command_id, void *args);
@@ -63,6 +64,6 @@ int vfs_ioctl(vfs_node_t *node, uint32_t command_id, void *args);
 //VFS functions
 
 vfs_node_t *vfs_lookup(char *path);
-vfs_node_t *vfs_mount(char *mount_path, vfs_node_t *fs_root);
+int vfs_mount(char *mount_path, vfs_node_t *fs_root);
 int vfs_unmount(char *path);
 void vfs_init();
