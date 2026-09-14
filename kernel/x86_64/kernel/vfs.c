@@ -286,14 +286,14 @@ int vfs_ioctl(vfs_node_t *node, uint32_t command_id, void *args) {
 vfs_node_t *vfs_lookup(char *path) {
     if (!path) {
         LOG_E("Path passed to lookup is null.\n");
-        return -EINVAL;
+        return NULL;
     }
     LOG_D("Received lookup for path %s.\n", path);
 
     size_t path_len = str_len(path);
     if (path_len == 0) {
         LOG_E("Path passed to lookup is empty.\n");
-        return -EINVAL;
+        return NULL;
     }
 
     vfs_node_t *current_node;
@@ -308,7 +308,7 @@ vfs_node_t *vfs_lookup(char *path) {
     }
     else {
         LOG_E("Relative path not implemented!!!");
-        return -EPERM;
+        return NULL;
     }
 
     //This is the main loop, it will start with getting the next path string, see if it exists and perform search if so.
@@ -325,7 +325,7 @@ vfs_node_t *vfs_lookup(char *path) {
         if (!current_node) {
             //This happens if the directory contains no child. finddir will return null.
             LOG_E("File/directory not found: %s", path);
-            return -ENOENT;
+            return NULL;
         }
 
         //If node is ok, look at the remaining path. If the right ptr is null char, this means end of path.

@@ -12,12 +12,13 @@ typedef enum {
 } vfs_node_type_t;
 
 struct _vfs_node_t;
+struct _vfs_dirent_t;
 typedef int (*vfs_read_t)(struct _vfs_node_t *node, size_t offset, size_t size, uint8_t *buffer);
 typedef int (*vfs_write_t)(struct _vfs_node_t *node, size_t offset, size_t size, uint8_t *buffer);
 typedef int (*vfs_close_t)(struct _vfs_node_t *node);
 typedef int (*vfs_open_t)(struct _vfs_node_t *node);
 typedef struct _vfs_node_t *(*vfs_finddir_t)(struct _vfs_node_t *node, char *name, size_t len);
-typedef int (*vfs_readdir_t)(struct _vfs_node_t *node, uint32_t index, vfs_dirent_t *dirent);
+typedef int (*vfs_readdir_t)(struct _vfs_node_t *node, uint32_t index, struct _vfs_dirent_t *dirent);
 typedef int (*vfs_create_t)(struct _vfs_node_t *parent, char *name, vfs_node_type_t type);
 typedef int (*vfs_ioctl_t)(struct _vfs_node_t *node, uint32_t command_id, void *args);
 
@@ -44,7 +45,7 @@ typedef struct _vfs_node_t {
     vfs_ops_t *operations;
 } vfs_node_t;
 
-typedef struct {
+typedef struct _vfs_dirent_t {
     char     name[128];
     uint64_t inode;
     vfs_node_type_t type;
