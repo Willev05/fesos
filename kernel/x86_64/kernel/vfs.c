@@ -9,6 +9,14 @@
 #include <kernel/errno.h>
 #include <memory/kmalloc.h>
 
+/**
+ * @brief Read from a file in the vfs.
+ * @param node The vfs node representing the file to read from.
+ * @param offset The offset in bytes to start reading from.
+ * @param size The size in bytes to read.
+ * @param buffer A pointer to the destination buffer.
+ * @return 0 on success, negative error codes when applicable.
+ */
 int vfs_read(vfs_node_t *node, size_t offset, size_t size, uint8_t *buffer) {
     if (!node) {
         LOG_E("Node passed to read is null.\n");
@@ -37,6 +45,14 @@ int vfs_read(vfs_node_t *node, size_t offset, size_t size, uint8_t *buffer) {
     return node->operations->read(node, offset, size, buffer);
 }
 
+/**
+ * @brief Write to a file in the vfs.
+ * @param node The vfs node representing the file to write to.
+ * @param offset The offset in bytes to start writing to.
+ * @param size The size in bytes to write.
+ * @param buffer A pointer to the source buffer.
+ * @return 0 on success, negative error codes when applicable.
+ */
 int vfs_write(vfs_node_t *node, size_t offset, size_t size, uint8_t *buffer) {
     if (!node) {
         LOG_E("Node passed to write is null.\n");
@@ -65,6 +81,11 @@ int vfs_write(vfs_node_t *node, size_t offset, size_t size, uint8_t *buffer) {
     return node->operations->write(node, offset, size, buffer);
 }
 
+/**
+ * @brief Close a file. This will decrease the internal ref counter. If at 0, will truly close the file and release resources.
+ * @param node The node representing the file.
+ * @return 0 on success, negative error code when applicable.
+ */
 int vfs_close(vfs_node_t *node) {
     if (!node) {
         LOG_E("Node passed to close is null.\n");
@@ -90,6 +111,11 @@ int vfs_close(vfs_node_t *node) {
     }
 }
 
+/**
+ * @brief Open a file. This will increase the internal ref counter. Will always notify the driver.
+ * @param node The node representing the file.
+ * @return 0 on success, negative error code when applicable.
+ */
 int vfs_open(vfs_node_t *node) {
     if (!node) {
         LOG_E("Node passed to open is null.\n");
