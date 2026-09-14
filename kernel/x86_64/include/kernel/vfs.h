@@ -38,7 +38,8 @@ typedef struct _vfs_node_t {
     uint32_t inode;
     vfs_node_type_t type;
     uint32_t ref_count;
-    struct _vfs_node_t *mountpoint;
+    struct _vfs_node_t *mountpoint; //Used by everything to point to their mountpoints. A mountpoint stub would point to its own mountpoint here (/mnt/usb0 would point to /) etc.
+    struct _vfs_node_t *mount_ptr; //Used for mountpoint stubs to point to fs_roots
 
     vfs_ops_t *operations;
 } vfs_node_t;

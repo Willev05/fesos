@@ -97,7 +97,9 @@ int vfs_close(vfs_node_t *node) {
 
     LOG_D("Received close-request for node name %s at inode %u.\n", node->name, node->inode);
 
+    //Update refcounts
     node->ref_count--;
+    node->mountpoint->ref_count--;
     //If 0, then we need to tell the driver so it can clean up. We then release the node.
     if (!node->ref_count) {
         int driver_status = 0;
@@ -127,7 +129,9 @@ int vfs_open(vfs_node_t *node) {
 
     LOG_D("Received open-request for node name %s at inode %u.\n", node->name, node->inode);
 
+    //Update refcounts
     node->ref_count++;
+    node->mountpoint->ref_count++;
     //We need to call the driver open function, if applicable.
     int driver_status = 0;
     //Check if the file supports open operation.
@@ -136,6 +140,7 @@ int vfs_open(vfs_node_t *node) {
         //If driver status did not return a 0, need to rollback the ref_count.
         if (driver_status) {
             node->ref_count--;
+            node->mountpoint->ref_count--;
             LOG_E("Could not open file. Returning error code.\n");
             return driver_status;
         }
@@ -357,6 +362,12 @@ int vfs_mount(char *mount_path, vfs_node_t *fs_root) {
     }
 
     mount_stub->type = VFS_NODE_MOUNTPOINT;
-    mount_stub->mountpoint = fs_root;
+    mount_stub->mount_ptr = fs_root;
+
+    //Update the ref_count for tracking.
+    mount_stub->ref_count++;
+    mount_stub->mountpoint->ref_count++;
+    fs_root->ref_count++;
+
     return 0;
 }
