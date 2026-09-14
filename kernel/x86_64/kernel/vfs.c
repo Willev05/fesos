@@ -262,6 +262,7 @@ int vfs_create(vfs_node_t *parent, char *name, vfs_node_type_t type) {
  * @param node The node for which to send the request.
  * @param command_id The command id for the driver to execute.
  * @param args A pointer to a struct containing extra info the request. This varies depending on backing driver/device/command.
+ * @return 0 on success, negative error code when applicable.
  */
 int vfs_ioctl(vfs_node_t *node, uint32_t command_id, void *args) {
     if (!node) {
@@ -338,6 +339,12 @@ vfs_node_t *vfs_lookup(char *path) {
     return current_node;
 }
 
+/**
+ * @brief Mount a file system to the specified `mount_path`. Dirrectory MUST exist to act as mountpoint.
+ * @param mount_path A valid directory for which to act as a mountpoint for the file system.
+ * @param fs_root The file system root node to redirect `mount_path` to.
+ * @return 0 on success, negative error code when applicable.
+ */
 int vfs_mount(char *mount_path, vfs_node_t *fs_root) {
     if (!fs_root) {
         LOG_D("Filesystem root passed to mount is null.\n");
@@ -363,6 +370,8 @@ int vfs_mount(char *mount_path, vfs_node_t *fs_root) {
 
     mount_stub->type = VFS_NODE_MOUNTPOINT;
     mount_stub->mount_ptr = fs_root;
+    //Lets unmount easily reference the stub.
+    fs_root->mount_ptr = mount_stub;
 
     //Update the ref_count for tracking.
     mount_stub->ref_count++;
@@ -370,4 +379,48 @@ int vfs_mount(char *mount_path, vfs_node_t *fs_root) {
     fs_root->ref_count++;
 
     return 0;
+}
+
+/**
+ * @brief Unmounts a file system mounted at `path`.
+ * @param path The path to the mountpoint for which the file system should be unmounted.
+ * @return 0 on success, negative error code when applicable.
+ */
+int vfs_unmount(char *path) {
+    if (!path) {
+        LOG_E("Path %s passed to unmount is invalid.\n, path");
+        return -EINVAL;
+    }
+    LOG_D("Received unmount request for path %s.\n", path);
+
+    //Try to get the mounted root.
+    vfs_node_t *fs_root = vfs_lookup(path);
+    if (!fs_root) {
+        LOG_E("Path %s not found.\n", path);
+        return -ENOENT;
+    }
+
+    //Check the mount stub.
+    vfs_node_t *mount_stub = fs_root->mount_ptr;
+    if (!mount_stub || mount_stub->type != VFS_NODE_MOUNTPOINT) {
+        LOG_E("Path %s does not resolve to a mountpoint.\n", path);
+        return -EINVAL;
+    }
+
+    //Now, we have the actual mount stub.
+    if (fs_root->ref_count > 1) {
+        //There are open files/directories. Cannot unmount.
+        LOG_E("Mounted fs at %s is busy and cannot be unmounted.");
+        return -EBUSY;
+    }
+
+    //Update the references to the other stuff. fs_root gets diminished in close.
+    mount_stub->ref_count--;
+    mount_stub->mountpoint->ref_count--;
+    
+    //Free the resources used by the stub. Should hopefully only be used by the mount/unmount systems since the link traversal is automatically done from mountpoint to fs_root.
+    kfree(mount_stub);
+
+    LOG_D("Finished unmount portion of unmount. Calling vfs_close for the driver call handle.\n");
+    return vfs_close(fs_root);
 }
