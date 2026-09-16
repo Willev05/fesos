@@ -5,18 +5,32 @@
 #include <common/math.h>
 
 //All private Data Structure functions
-void avl_update(avl_node_t *node);
-avl_node_t *avl_check_and_balance(avl_node_t *node);
-int avl_get_balance_factor(avl_node_t *node);
-avl_node_t *avl_rotate_right(avl_node_t *node);
-avl_node_t *avl_rotate_left(avl_node_t *node);
-avl_node_t *avl_bubble_update_and_balance(avl_node_t *node);
-avl_node_t *avl_get_predecessor(avl_node_t *node);
-avl_node_t *avl_get_successor(avl_node_t *node);
-avl_node_t *avl_insert_rec(avl_node_t *root, avl_node_t *node_to_insert, avl_compare_t comp);
-avl_node_t *avl_get_node_rec(avl_node_t *root, avl_node_t *key, avl_compare_t comp);
+static void avl_update(avl_node_t *node);
+static avl_node_t *avl_check_and_balance(avl_node_t *node);
+static int avl_get_balance_factor(avl_node_t *node);
+static avl_node_t *avl_rotate_right(avl_node_t *node);
+static avl_node_t *avl_rotate_left(avl_node_t *node);
+static avl_node_t *avl_bubble_update_and_balance(avl_node_t *node);
+static avl_node_t *avl_get_predecessor(avl_node_t *node);
+static avl_node_t *avl_get_successor(avl_node_t *node);
+static avl_node_t *avl_insert_rec(avl_node_t *root, avl_node_t *node_to_insert, avl_compare_t comp);
+static avl_node_t *avl_get_node_rec(avl_node_t *root, avl_node_t *key, avl_compare_t comp);
 
 //Implementation of public functions
+
+/**
+ * @brief Initilize the node to all nulls, and set the update callback on the node.
+ * @param node The node to init.
+ * @param update_callback The update callback to use on this node. Can be NULL.
+ */
+void avl_init(avl_node_t *node, avl_update_t update_callback) {
+    if (!node) return;
+    node->parent = NULL;
+    node->left = NULL;
+    node->right = NULL;
+    node->subtree_max_depth = 0;
+    node->update = update_callback;
+}
 
 /**
  * @brief Inserts `node_to_insert` into `tree` using `comp` to find its appropriate location.
@@ -151,7 +165,7 @@ avl_node_t *avl_prev(avl_node_t *node) {
 }
 
 //Implementation of private functions
-void avl_update(avl_node_t *node) {
+static void avl_update(avl_node_t *node) {
     if (!node) return;
 
     //Max depth calculation. Simply the max of either child, and add 1.
@@ -163,7 +177,7 @@ void avl_update(avl_node_t *node) {
     if (node->update) node->update(node);
 }
 
-avl_node_t *avl_check_and_balance(avl_node_t *node) {
+static avl_node_t *avl_check_and_balance(avl_node_t *node) {
     avl_node_t *subtree_root = node;
     int balance = avl_get_balance_factor(node);
 
@@ -200,7 +214,7 @@ avl_node_t *avl_check_and_balance(avl_node_t *node) {
     return subtree_root;
 }
 
-int avl_get_balance_factor(avl_node_t *node) {
+static int avl_get_balance_factor(avl_node_t *node) {
     //Start by getting the max depth of the right or left subtree, including parent node.
     uint64_t max_depth_left_subtree = (node->left) ? node->left->subtree_max_depth + 1 : 0;
     uint64_t max_depth_right_subtree = (node->right) ? node->right->subtree_max_depth + 1 : 0;
@@ -208,7 +222,7 @@ int avl_get_balance_factor(avl_node_t *node) {
     return max_depth_left_subtree - max_depth_right_subtree;
 }
 
-avl_node_t *avl_rotate_right(avl_node_t *node) {
+static avl_node_t *avl_rotate_right(avl_node_t *node) {
     //A right rotation will make the left child the new subtree root.
     avl_node_t *new_subtree_root = node->left;
     //Get the current subtree's parent. Null if this is the whole tree.
@@ -232,7 +246,7 @@ avl_node_t *avl_rotate_right(avl_node_t *node) {
     return new_subtree_root;
 }
 
-avl_node_t *avl_rotate_left(avl_node_t *node) {
+static avl_node_t *avl_rotate_left(avl_node_t *node) {
     //A left rotation will make the right child the new subtree root.
     avl_node_t *new_subtree_root = node->right;
     //Get the current subtree's parent. Null if root of complete tree.
@@ -256,7 +270,7 @@ avl_node_t *avl_rotate_left(avl_node_t *node) {
     return new_subtree_root;
 }
 
-avl_node_t *avl_bubble_update_and_balance(avl_node_t *node) {
+static avl_node_t *avl_bubble_update_and_balance(avl_node_t *node) {
     if (!node) return NULL;
     while (1) {
         //Start by updating the data for this node.
@@ -279,7 +293,7 @@ avl_node_t *avl_bubble_update_and_balance(avl_node_t *node) {
     }
 }
 
-avl_node_t *avl_get_predecessor(avl_node_t *node){
+static avl_node_t *avl_get_predecessor(avl_node_t *node){
     avl_node_t *predecessor = NULL;
 
     if (node->left != NULL) {
@@ -302,7 +316,7 @@ avl_node_t *avl_get_predecessor(avl_node_t *node){
     return predecessor;
 }
 
-avl_node_t *avl_get_successor(avl_node_t *node) {
+static avl_node_t *avl_get_successor(avl_node_t *node) {
     avl_node_t *successor = NULL;
 
     if (node->right != NULL) {
@@ -325,7 +339,7 @@ avl_node_t *avl_get_successor(avl_node_t *node) {
     return successor;
 }
 
-avl_node_t *avl_insert_rec(avl_node_t *root, avl_node_t *node_to_insert, avl_compare_t comp) {
+static avl_node_t *avl_insert_rec(avl_node_t *root, avl_node_t *node_to_insert, avl_compare_t comp) {
     //In case root changes due to balance, etc.
     avl_node_t *new_root = root;
     //The parent pointer on the to-be-inserted node. Will be the real parent since the real one is the last to update this.
@@ -354,7 +368,7 @@ avl_node_t *avl_insert_rec(avl_node_t *root, avl_node_t *node_to_insert, avl_com
     return new_root;
 }
 
-avl_node_t *avl_get_node_rec(avl_node_t *root, avl_node_t *key, avl_compare_t comp) {
+static avl_node_t *avl_get_node_rec(avl_node_t *root, avl_node_t *key, avl_compare_t comp) {
     if (!root) return NULL;
     int comp_ans = comp(root, key);
     if (comp_ans == 0) return root;
