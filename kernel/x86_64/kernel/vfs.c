@@ -10,7 +10,10 @@
 #include <memory/kmalloc.h>
 #include <common/stdstr.h>
 
+static avl_tree_t vfs_tree;
 static vfs_node_t *vfs_root_node;
+
+static int vfs_compare(struct _avl_node_t *node_a, struct _avl_node_t *node_b);
 
 /**
  * @brief Read from a file in the vfs.
@@ -188,7 +191,31 @@ vfs_node_t *vfs_finddir(vfs_node_t *node, char *name, size_t len) {
 
     //Simply relay the command to the driver backing this node.
     LOG_D("Finddir request checks passed. Passing to driver.\n");
-    return node->operations->finddir(node, name, len);
+    vfs_node_data_t node_data = node->operations->finddir(node, name, len);
+
+    //If driver returns a struct with operations = NULL, we assume it was not found.
+    if (!node_data.operations) return NULL;
+
+    //We want to check if the node is found in the cache before creating a new instance.
+    vfs_node_t key_node = { .mountpoint = node->mountpoint, .inode = node_data.inode};
+    vfs_node_t *found_node = avl_get_node(&vfs_tree, &key_node, vfs_compare);
+    if (!found_node) {
+        //If node not found, we need to create one.
+        vfs_node_t *new_node = (vfs_node_t *)kmalloc(sizeof(vfs_node_t));
+        new_node->inode = node_data.inode;
+        str_ncpy(name, new_node->name, len);
+        new_node->operations = node_data.operations;
+        new_node->mount_ptr = NULL;
+        new_node->mountpoint = node->mountpoint;
+        new_node->type = node_data.type;
+
+        //Insert it into our tree.
+        avl_insert(&vfs_tree, new_node, vfs_compare);
+
+        return new_node;
+    }
+
+    return found_node;
 }
 
 /**
@@ -307,7 +334,7 @@ vfs_node_t *vfs_lookup(char *path) {
         current_node = vfs_root_node;
     }
     else {
-        LOG_E("Relative path not implemented!!!");
+        LOG_E("Relative path not implemented!!!\n");
         return NULL;
     }
 
@@ -318,13 +345,17 @@ vfs_node_t *vfs_lookup(char *path) {
         //If we exited the, check to see if right and left are one apart, if so, then we disregard and keep going (if applicable).
         if (left_ptr - right_ptr > 1) {
             //We see at least 1 character that is not /. We get the name and pass it to finddir.
-            current_node = vfs_finddir(current_node, &path[left_ptr], right_ptr - left_ptr - 1);
+            vfs_node_t *new_node = vfs_finddir(current_node, &path[left_ptr], right_ptr - left_ptr + 1);
+
+            //Since for now we dont really cache, simply close it. For now, cache mekanism assumes holding a reference can keep it cached.
+            if (!current_node->ref_count) kfree(current_node);
+            current_node = new_node;
         }
 
         //Now, we run some checks to see if we should stop.
         if (!current_node) {
             //This happens if the directory contains no child. finddir will return null.
-            LOG_E("File/directory not found: %s", path);
+            LOG_E("File/directory not found: %s\n", path);
             return NULL;
         }
 
@@ -411,7 +442,7 @@ int vfs_unmount(char *path) {
     //Now, we have the actual mount stub.
     if (fs_root->ref_count > 1) {
         //There are open files/directories. Cannot unmount.
-        LOG_E("Mounted fs at %s is busy and cannot be unmounted.");
+        LOG_E("Mounted fs at %s is busy and cannot be unmounted.\n");
         return -EBUSY;
     }
 
@@ -426,7 +457,23 @@ int vfs_unmount(char *path) {
     return vfs_close(fs_root);
 }
 
-void vfs_init() {
-    LOG_D("Nothing to init for vfs...\n");
+void vfs_init(vfs_node_t *root_node) {
+    vfs_root_node = root_node;
+    //Keep the node marked for cached.
+    vfs_root_node->ref_count++;
     return;
+}
+
+static int vfs_compare(avl_node_t *node_a, avl_node_t *node_b) {
+    vfs_node_t *node_a_complete = (vfs_node_t*)node_a;
+    vfs_node_t *node_b_complete = (vfs_node_t*)node_b;
+    //Check the mountpoint as the most sig.
+    if ((uint64_t)node_a_complete->mountpoint > (uint64_t)node_b_complete->mountpoint) return 1;
+    if ((uint64_t)node_a_complete->mountpoint < (uint64_t)node_b_complete->mountpoint) return -1;
+
+    //If equal, check the inode.
+    if (node_a_complete->inode > node_b_complete->inode) return 1;
+    if (node_a_complete->inode < node_b_complete->inode) return -1;
+
+    return 0;
 }

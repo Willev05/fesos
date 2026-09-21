@@ -13,6 +13,8 @@
 #include <buses/pci.h>
 #include <drivers/storage/ahci.h>
 #include <kernel/drivers.h>
+#include <kernel/vfs.h>
+#include <drivers/fs/ramfs.h>
 
 uint32_t magic_number = 0xDEADC0DE;
 
@@ -29,7 +31,7 @@ void _start(boot_info *BootInfo) {
     BootInfo = (boot_info*)((uint64_t)(BootInfo) + DIRECT_MAP_BASE);
 
     //For debugging, change log subsystems up here.
-    log_enable_subsystem_debug(LOG_SYS_NONE);
+    log_enable_subsystem_debug(LOG_SYS_ALL);
 
     serial_init();
     idt_init();
@@ -78,6 +80,21 @@ void _start(boot_info *BootInfo) {
 
     //Then call the discover to discover PCI devices and bound early drivers.
     pci_discover();
+
+    ramfs_init();
+    vfs_init(ramfs_get_fs());
+
+    vfs_node_t *test_node = vfs_lookup("/test");
+    if (!test_node){
+        LOG_E("TEstnode is null.\n")
+    }
+    else {
+        vfs_open(test_node);
+        uint64_t test_buffer;
+        vfs_read(test_node, 0, 8, &test_buffer);
+        LOG_I("Test node returned %lx.\n", test_buffer);
+    }
+    
 
     LOG_I("Hello from the kernel!\n");
 

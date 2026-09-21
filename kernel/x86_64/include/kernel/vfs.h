@@ -4,6 +4,7 @@
 #pragma once
 #include <stdint.h>
 #include <common/stdtypes.h>
+#include <common/ds/avl.h>
 
 typedef enum {
     VFS_NODE_FILE,
@@ -13,11 +14,12 @@ typedef enum {
 
 struct _vfs_node_t;
 struct _vfs_dirent_t;
+struct _vfs_node_data_t;
 typedef int (*vfs_read_t)(struct _vfs_node_t *node, size_t offset, size_t size, uint8_t *buffer);
 typedef int (*vfs_write_t)(struct _vfs_node_t *node, size_t offset, size_t size, uint8_t *buffer);
 typedef int (*vfs_close_t)(struct _vfs_node_t *node);
 typedef int (*vfs_open_t)(struct _vfs_node_t *node);
-typedef struct _vfs_node_t *(*vfs_finddir_t)(struct _vfs_node_t *node, char *name, size_t len);
+typedef struct _vfs_node_data_t (*vfs_finddir_t)(struct _vfs_node_t *node, char *name, size_t len);
 typedef int (*vfs_readdir_t)(struct _vfs_node_t *node, uint32_t index, struct _vfs_dirent_t *dirent);
 typedef int (*vfs_create_t)(struct _vfs_node_t *parent, char *name, vfs_node_type_t type);
 typedef int (*vfs_ioctl_t)(struct _vfs_node_t *node, uint32_t command_id, void *args);
@@ -35,6 +37,7 @@ typedef struct {
 } vfs_ops_t;
 
 typedef struct _vfs_node_t {
+    avl_node_t avl;
     char name[128];
     uint32_t inode;
     vfs_node_type_t type;
@@ -46,11 +49,18 @@ typedef struct _vfs_node_t {
 } vfs_node_t;
 
 typedef struct _vfs_dirent_t {
-    char     name[128];
+    char name[128];
     uint64_t inode;
     vfs_node_type_t type;
     size_t size;
 } vfs_dirent_t;
+
+//Used for drivers to pass basic data back to VFS_LOOKUP so vfs may create a node if required.
+typedef struct _vfs_node_data_t {
+    uint32_t inode;
+    vfs_node_type_t type;
+    vfs_ops_t *operations;
+} vfs_node_data_t;
 
 //IO redirect functions
 
@@ -68,4 +78,4 @@ int vfs_ioctl(vfs_node_t *node, uint32_t command_id, void *args);
 vfs_node_t *vfs_lookup(char *path);
 int vfs_mount(char *mount_path, vfs_node_t *fs_root);
 int vfs_unmount(char *path);
-void vfs_init();
+void vfs_init(vfs_node_t *root_node);

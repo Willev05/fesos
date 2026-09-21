@@ -18,7 +18,7 @@ void handle_interrupt(interrupt_frame *int_frame) {
     }
 
     LOG_E("Unhandled interrupt: %u. Cannot recover from unhandled exception.\n", int_frame->interrupt_number);
-    PANIC("Unhandled interrupt %u from instruction located at %lx.", int_frame->interrupt_number, int_frame->rip);
+    PANIC("Unhandled interrupt %u with error code %u from instruction located at %lx.", int_frame->interrupt_number, int_frame->error_code, int_frame->rip);
 }
 
 void isr_register_interrupt_handler(uint8_t interrupt_num, isr_t handler) {

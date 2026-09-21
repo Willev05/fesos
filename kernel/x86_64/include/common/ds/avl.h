@@ -45,7 +45,6 @@ void avl_init(avl_node_t *node, avl_update_t update_callback);
 void avl_insert(avl_tree_t *tree, avl_node_t *node_to_insert, avl_compare_t comp);
 void avl_remove(avl_tree_t *tree, avl_node_t *node_to_remove);
 
-//Search
 avl_node_t *avl_get_node(avl_tree_t *tree, avl_node_t *key, avl_compare_t comp);
 
 //Traversal
