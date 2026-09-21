@@ -377,6 +377,7 @@ int vfs_mount(char *mount_path, vfs_node_t *fs_root) {
     mount_stub->ref_count++;
     mount_stub->mountpoint->ref_count++;
     fs_root->ref_count++;
+    fs_root->operations->open(fs_root);
 
     return 0;
 }
@@ -423,4 +424,9 @@ int vfs_unmount(char *path) {
 
     LOG_D("Finished unmount portion of unmount. Calling vfs_close for the driver call handle.\n");
     return vfs_close(fs_root);
+}
+
+void vfs_init() {
+    LOG_D("Nothing to init for vfs...\n");
+    return;
 }

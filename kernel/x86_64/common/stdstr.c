@@ -134,6 +134,62 @@ size_t str_len(char *str) {
 }
 
 /**
+ * @brief Compares the 2 strings lexicographically.
+ * @param str_a String a.
+ * @param str_b String b.
+ * @return < 0 if str_a > str_b. > 0 if str_a < str_b. == 0 if equal. Keep in mind that str_a > str_b means lexicographically. In actuality, the char a < char b.
+ */
+int str_cmp(char *str_a, char *str_b) {
+    size_t index = 0;
+    while (str_a[index] && str_b[index]) {
+        uint64_t comp = str_a[index] - str_b[index];
+        if (comp) return comp;
+        index++;
+    }
+
+    //If both strings ended at the same time, they are equal.
+    return str_a[index] - str_b[index];
+}
+
+/**
+ * @brief Compares the 2 strings lexicographically with len parameters.
+ * @param str_a String a.
+ * @param str_b String b.
+ * @param len_a The length of string a.
+ * @param len_b The length of string b.
+ * @return < 0 if str_a > str_b. > 0 if str_a < str_b. == 0 if equal. Keep in mind that str_a > str_b means lexicographically. In actuality, the char a < char b.
+ */
+int str_ncmp(char *str_a, char *str_b, size_t len_a, size_t len_b) {
+    size_t index = 0;
+    while (index < len_a && index < len_b) {
+        uint64_t comp = str_a[index] - str_b[index];
+        if (comp) return comp;
+        index++;
+    }
+
+    //If both strings ended at the same time, they are equal.
+    if (len_a == len_b) return 0;
+
+    //Else, act like there is a null terminator byte instead of out of bounds.
+    if (index == len_a) return -str_b[index];
+    else return str_a[index];
+}
+
+/**
+ * @brief Copies `n` characters from `src` to `dest`.
+ * @param src The source string.
+ * @param dest The destination string/buffer.
+ * @param n The # of characters to copy.
+ * @return n on success.
+ */
+int str_ncpy(char *src, char *dest, size_t n) {
+    for (size_t index = 0; index < n; index++) {
+        dest[index] = src[index];
+    }
+    return n;
+}
+
+/**
  * @brief Sets the memory at location 'start' to pattern 'pattern' over 'size' bytes.
  * @param start A pointer to starting memory location.
  * @param pattern The byte-pattern to repeat throughout the memory area.
