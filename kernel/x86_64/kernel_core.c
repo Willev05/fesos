@@ -31,7 +31,7 @@ void _start(boot_info *BootInfo) {
     BootInfo = (boot_info*)((uint64_t)(BootInfo) + DIRECT_MAP_BASE);
 
     //For debugging, change log subsystems up here.
-    log_enable_subsystem_debug(LOG_SYS_ALL);
+    log_enable_subsystem_debug(LOG_SYS_NONE);
 
     serial_init();
     idt_init();
@@ -84,7 +84,7 @@ void _start(boot_info *BootInfo) {
     ramfs_init();
     vfs_init(ramfs_get_fs());
 
-    vfs_node_t *test_node = vfs_lookup("/test");
+    vfs_node_t *test_node = vfs_lookup("/subdirtest/test");
     if (!test_node){
         LOG_E("TEstnode is null.\n")
     }
@@ -94,6 +94,17 @@ void _start(boot_info *BootInfo) {
         vfs_read(test_node, 0, 8, &test_buffer);
         LOG_I("Test node returned %lx.\n", test_buffer);
     }
+
+    vfs_dirent_t dirent;
+    vfs_node_t *test_dir = vfs_lookup("/subdirtest");
+    if (!test_node){
+        LOG_E("Testdir is null.\n")
+    }
+    else {
+       vfs_readdir(test_dir, 0, &dirent);
+       LOG_I("READDIR returns: name: %s, inode: %u, size: %lu, type: %u.\n", dirent.name, dirent.inode, dirent.size, dirent.type);
+    }
+
     
 
     LOG_I("Hello from the kernel!\n");

@@ -165,7 +165,7 @@ vfs_node_t *vfs_finddir(vfs_node_t *node, char *name, size_t len) {
         LOG_E("Node passed to finddir is null.\n");
         return NULL;
     }
-    LOG_D("Received finddir-request for node name %s at inode %u.\n", node->name, node->inode);
+    LOG_D("Received finddir-request for node name %s at inode %u. Params: name: %s, len: %lu.\n", node->name, node->inode, name, len);
     if (!name) {
         LOG_E("Name string passed to finddir is null.\n");
         return NULL;
@@ -197,7 +197,9 @@ vfs_node_t *vfs_finddir(vfs_node_t *node, char *name, size_t len) {
     if (!node_data.operations) return NULL;
 
     //We want to check if the node is found in the cache before creating a new instance.
-    vfs_node_t key_node = { .mountpoint = node->mountpoint, .inode = node_data.inode};
+    vfs_node_t key_node;
+    key_node.mountpoint = node->mountpoint;
+    key_node.inode = node_data.inode;
     vfs_node_t *found_node = avl_get_node(&vfs_tree, &key_node, vfs_compare);
     if (!found_node) {
         //If node not found, we need to create one.
@@ -345,7 +347,7 @@ vfs_node_t *vfs_lookup(char *path) {
         //If we exited the, check to see if right and left are one apart, if so, then we disregard and keep going (if applicable).
         if (left_ptr - right_ptr > 1) {
             //We see at least 1 character that is not /. We get the name and pass it to finddir.
-            vfs_node_t *new_node = vfs_finddir(current_node, &path[left_ptr], right_ptr - left_ptr + 1);
+            vfs_node_t *new_node = vfs_finddir(current_node, &path[left_ptr], right_ptr - left_ptr);
 
             //Since for now we dont really cache, simply close it. For now, cache mekanism assumes holding a reference can keep it cached.
             if (!current_node->ref_count) kfree(current_node);
@@ -363,6 +365,9 @@ vfs_node_t *vfs_lookup(char *path) {
         if (!path[right_ptr]) {
             break;
         }
+
+        right_ptr++;
+        left_ptr = right_ptr;
     }
 
     //If we reach here, we got the file/directory.
