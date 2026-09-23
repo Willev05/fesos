@@ -4,6 +4,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <common/ds/avl.h>
 
 //Type of node in vm_ds_node.
 typedef enum {
@@ -37,6 +38,9 @@ typedef union {
 
 //The node in the AVL tree used for the VMA
 typedef struct _vm_ds_node {
+    //AVL "superclass"
+    avl_node_t avl;
+
     //Useful data in the node. start_addr is used for the ordering.
     uint64_t start_addr;
     uint64_t size;
@@ -46,15 +50,8 @@ typedef struct _vm_ds_node {
     //Backing information. Depends on type.
     vma_backing backing;
 
-    //Pointers to the other nodes in the tree.
-    struct _vm_ds_node *parent;
-    struct _vm_ds_node *left;
-    struct _vm_ds_node *right;
-
     //Used for quickly finding slot with worst fit.
     uint64_t subtree_max_free_slot;
-    //Used for quick balance check calc by keeping the subtree max depth.
-    uint64_t subtree_max_depth;
 } vm_ds_node;
 
 void vma_init();

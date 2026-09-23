@@ -13,40 +13,33 @@
 
 #define MINIMUM_AVAILABLE_NODES 5
 
-vm_ds_node *kernel_vma_heap_tree_root = NULL;
-vm_ds_node *kernel_vma_mmio_tree_root = NULL;
+avl_tree_t kernel_vma_heap_tree;
+avl_tree_t kernel_vma_mmio_tree;
 vm_ds_node *free_list = NULL;
 uint64_t free_node_count = 0;
 uint8_t in_replenish_cycle = 0;
 
 //The non data structure implementations
-void replenish_slab_from_tree();
-vm_ds_node *alloc_vm_ds_node();
-void free_vm_ds_node(vm_ds_node *node);
-void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing);
-void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr);
+static void replenish_slab_from_tree();
+static vm_ds_node *alloc_vm_ds_node();
+static void free_vm_ds_node(vm_ds_node *node);
+static void *vma_allocate_memory_from_tree(avl_tree_t *tree, uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing);
+static void vma_free_memory_from_tree(avl_tree_t *tree, uint64_t start_addr);
+static void init_vm_ds_node(vm_ds_node *node, uint64_t start, uint64_t size, vm_node_type type, avl_update_t update_callback);
 
-//All VM Data Structure functions
-void vm_ds_init_node(vm_ds_node *node, uint64_t start, uint64_t size, vm_node_type type);
-vm_ds_node *vm_ds_insert(vm_ds_node *root, vm_ds_node *node_to_insert);
-void vm_ds_update(vm_ds_node *node);
-vm_ds_node *vm_ds_check_and_balance(vm_ds_node *node);
-int vm_ds_get_balance_factor(vm_ds_node *node);
-vm_ds_node *vm_ds_rotate_right(vm_ds_node *node);
-vm_ds_node *vm_ds_rotate_left(vm_ds_node *node);
-vm_ds_node *vm_ds_bubble_update_and_balance(vm_ds_node *node);
-vm_ds_node *vm_ds_remove(vm_ds_node *root, vm_ds_node *node_to_remove);
-vm_ds_node *vm_ds_get_node(vm_ds_node *root, uint64_t addr);
-vm_ds_node *vm_ds_find_worst_fit(vm_ds_node *root, uint64_t size);
-vm_ds_node *vm_ds_get_predecessor(vm_ds_node *node);
-vm_ds_node *vm_ds_get_successor(vm_ds_node *node);
-static void vma_print_tree(vm_ds_node *root);
+//All VM AVL Data Structure functions
+static void vm_avl_update(avl_node_t *node);
+static int vm_avl_comp_addr(avl_node_t *node_a, avl_node_t *node_b);
+static int vm_avl_comp_addr_space(avl_node_t *node_a, avl_node_t *node_b);
+static int vm_avl_comp_max_free_slot(avl_node_t *node_a, avl_node_t *node_b);
 
 uint8_t vma_demand_paging(uint64_t fault_addr) {
+    vm_ds_node temp_key;
+    temp_key.start_addr = fault_addr;
     //We start by checking if it is user or supervisor that triggered this to search the peoper tree.
     vm_ds_node *node_for_address;
     if (fault_addr <= 0x00007FFFFFFFFFFF) node_for_address = NULL; //TODO: Implement when userland exists.
-    else node_for_address = vm_ds_get_node(kernel_vma_heap_tree_root, fault_addr); //Only kernel heap is tracked by VMA and has demand paging.
+    else node_for_address = (vm_ds_node*)avl_get_node(&kernel_vma_heap_tree, (avl_node_t*)(&temp_key), vm_avl_comp_addr_space); //Only kernel heap is tracked by VMA and has demand paging.
 
     if (!node_for_address) {
         LOG_E("Address %lx is not a valid virtual address in requested tree.\n", fault_addr);
@@ -88,23 +81,26 @@ void vma_init() {
     free_list = start_of_page;
 
     //Now, we can init our kernel heap tree. We start with a node representing the node page we just requested.
-    kernel_vma_heap_tree_root = alloc_vm_ds_node();
-    vm_ds_init_node(kernel_vma_heap_tree_root, KERNEL_HEAP_START, 4096, VMA_REGULAR);
+    
+    vm_ds_node *kernel_vma_heap_tree_root = alloc_vm_ds_node();
+    init_vm_ds_node(kernel_vma_heap_tree_root, KERNEL_HEAP_START, 4096, VMA_REGULAR, vm_avl_update);
     kernel_vma_heap_tree_root->flags = PT_GLOBAL | PT_WRITEABLE | PT_NX;
+    kernel_vma_heap_tree.root = (avl_node_t*)kernel_vma_heap_tree_root;
 
     //Then, we create the next node representing the rest of kernel heap space which we add to the kernel tree.
     vm_ds_node *kheap_remaining = alloc_vm_ds_node();
-    vm_ds_init_node(kheap_remaining, KERNEL_HEAP_START + 4096, KERNEL_HEAP_SIZE - 4096, VMA_FREE);
-    vm_ds_insert(kernel_vma_heap_tree_root, kheap_remaining);
+    init_vm_ds_node(kheap_remaining, KERNEL_HEAP_START + 4096, KERNEL_HEAP_SIZE - 4096, VMA_FREE, vm_avl_update);
+    avl_insert(&kernel_vma_heap_tree, (avl_node_t*)kheap_remaining, vm_avl_comp_addr);
 
     //After the heap init, we can simply do the MMIO one.
-    kernel_vma_mmio_tree_root = alloc_vm_ds_node();
-    vm_ds_init_node(kernel_vma_mmio_tree_root, KERNEL_MMIO_START, KERNEL_MMIO_SIZE, VMA_FREE);
+    vm_ds_node *kernel_vma_mmio_tree_root = alloc_vm_ds_node();
+    init_vm_ds_node(kernel_vma_mmio_tree_root, KERNEL_MMIO_START, KERNEL_MMIO_SIZE, VMA_FREE, vm_avl_update);
+    kernel_vma_mmio_tree.root = (avl_node_t*)kernel_vma_mmio_tree_root;
 }
 
 void vma_free_memory_from_ktree(uint64_t start_addr) {
-    if (start_addr >= KERNEL_HEAP_START && start_addr < KERNEL_HEAP_LIMIT) vma_free_memory_from_tree(&kernel_vma_heap_tree_root, start_addr);
-    else if (start_addr >= KERNEL_MMIO_START && start_addr < KERNEL_MMIO_LIMIT) vma_free_memory_from_tree(&kernel_vma_mmio_tree_root, start_addr);
+    if (start_addr >= KERNEL_HEAP_START && start_addr < KERNEL_HEAP_LIMIT) vma_free_memory_from_tree(&kernel_vma_heap_tree, start_addr);
+    else if (start_addr >= KERNEL_MMIO_START && start_addr < KERNEL_MMIO_LIMIT) vma_free_memory_from_tree(&kernel_vma_mmio_tree, start_addr);
 }
 
 void vma_free_memory_from_utree(uint64_t start_addr) {
@@ -115,19 +111,19 @@ void *vma_allocate_memory_from_ktree(uint64_t size, vm_node_type allocation_type
 
     //We allocate to the heap tree unless it is an MMIO request. When unmanaged, the kernel trees are either MMIO tree or HEAP.
     if (allocation_type == VMA_UNMANAGED_MAPPING && allocation_backing->unmanaged.tree == VMA_TREE_KMMIO) {
-        return vma_allocate_memory_from_tree(&kernel_vma_mmio_tree_root, size, allocation_type, flags, allocation_backing);
+        return vma_allocate_memory_from_tree(&kernel_vma_mmio_tree, size, allocation_type, flags, allocation_backing);
     }
     if (allocation_type == VMA_HARDWARE_MMIO) {
-        return vma_allocate_memory_from_tree(&kernel_vma_mmio_tree_root, size, allocation_type, flags, allocation_backing);
+        return vma_allocate_memory_from_tree(&kernel_vma_mmio_tree, size, allocation_type, flags, allocation_backing);
     }
-    return vma_allocate_memory_from_tree(&kernel_vma_heap_tree_root, size, allocation_type, flags, allocation_backing);
+    return vma_allocate_memory_from_tree(&kernel_vma_heap_tree, size, allocation_type, flags, allocation_backing);
 }
 
 void *vma_allocate_memory_from_utree(uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
     return NULL; //TODO: Implement when userspace exists
 }
 
-void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
+static void *vma_allocate_memory_from_tree(avl_tree_t *tree, uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
     //DEBUG
     //kprintf("\nTree before allocation:\n");
     //vma_print_tree(*root);
@@ -136,7 +132,7 @@ void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_ty
     if (allocation_type == VMA_FREE) return NULL;
     LOG_D("Received allocation request of size %lu, type %u, flags %u.\n", size, allocation_type, flags);
     //We need to locate the worst fit for this request.
-    vm_ds_node *node_for_request = vm_ds_find_worst_fit(*root, size);
+    vm_ds_node *node_for_request = (vm_ds_node*)avl_get_node(tree, NULL, vm_avl_comp_max_free_slot);
 
     //NULL check
     if (!node_for_request) {
@@ -154,7 +150,7 @@ void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_ty
         //We need to get a node for the remaining hole after the allocation.
         vm_ds_node *node_for_leftover = alloc_vm_ds_node();
         uint64_t leftover_start = node_for_request->start_addr + size;
-        vm_ds_init_node(node_for_leftover, leftover_start, node_for_request->size - size, VMA_FREE);
+        init_vm_ds_node(node_for_leftover, leftover_start, node_for_request->size - size, VMA_FREE, vm_avl_update);
 
         //Start by prepping the requested node with the data from the request.
         node_for_request->type = allocation_type;
@@ -162,7 +158,7 @@ void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_ty
         node_for_request->size = size;
 
         //Then, simply insert into the tree.
-        *root = vm_ds_insert(*root, node_for_leftover);
+        avl_insert(tree, (avl_node_t*)node_for_leftover, vm_avl_comp_addr);
     }
 
     LOG_D("Found slot starting at address %lx.\n", node_for_request->start_addr);
@@ -193,7 +189,7 @@ void *vma_allocate_memory_from_tree(vm_ds_node **root, uint64_t size, vm_node_ty
     return (void *)node_for_request->start_addr;
 }
 
-void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
+static void vma_free_memory_from_tree(avl_tree_t *tree, uint64_t start_addr) {
     //DEBUG
     //kprintf("\nTree before free:\n");
     //vma_print_tree(*root);
@@ -201,7 +197,9 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     LOG_D("Received free request of address %lx.\n", start_addr);
 
     //We first need to find this node from the tree. It needs to be the start_address of the requested block.
-    vm_ds_node *node_to_free = vm_ds_get_node(*root, start_addr);
+    vm_ds_node temp_key;
+    temp_key.start_addr = start_addr;
+    vm_ds_node *node_to_free = (vm_ds_node*)avl_get_node(tree, (avl_node_t*)(&temp_key), vm_avl_comp_addr);
 
     if (!node_to_free) {
         LOG_E("No node with address %lx could be found in tree.\n", start_addr);
@@ -225,8 +223,8 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     //UNMANAGED will not require processing by the VMA. It should only reclaim the virtual memory space.
 
     //Now, we need to check to see if the successor and/or predecessor are also "free" to coalesce them.
-    vm_ds_node *successor = vm_ds_get_successor(node_to_free);
-    vm_ds_node *predecessor = vm_ds_get_predecessor(node_to_free);
+    vm_ds_node *successor = (vm_ds_node*)avl_next((avl_node_t*)node_to_free);
+    vm_ds_node *predecessor = (vm_ds_node*)avl_prev((avl_node_t*)node_to_free);
 
     //Now, we have three cases:
     //Case 1: Both pre/suc are free
@@ -239,8 +237,8 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
         predecessor->size = new_block_size;
 
         //We then delete both other nodes!
-        *root = vm_ds_remove(*root, successor);
-        *root = vm_ds_remove(*root, node_to_free);
+        avl_remove(tree, (avl_node_t*)successor);
+        avl_remove(tree, (avl_node_t*)node_to_free);
 
         //Lastly, readd them to the free node pool.
         successor->start_addr = (uint64_t)node_to_free;
@@ -258,7 +256,7 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
         predecessor->size = new_block_size;
 
         //We then delete the other node!
-        *root = vm_ds_remove(*root, node_to_free);
+        avl_remove(tree, (avl_node_t*)node_to_free);
 
         //Lastly, readd them to the free node pool.
         node_to_free->start_addr = (uint64_t)free_list;
@@ -276,7 +274,7 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
         node_to_free->type = VMA_FREE;
 
         //We then delete the other node!
-        *root = vm_ds_remove(*root, successor);
+        avl_remove(tree, (avl_node_t*)successor);
 
         //Lastly, readd them to the free node pool.
         successor->start_addr = (uint64_t)free_list;
@@ -294,11 +292,11 @@ void vma_free_memory_from_tree(vm_ds_node **root, uint64_t start_addr) {
     //vma_print_tree(*root);
 }
 
-void replenish_slab_from_tree() {
+static void replenish_slab_from_tree() {
     LOG_D("VMA free node list is low, replenishing slab from kheap.\n");
     //We want to get as many nodes that can fit in one page
     uint32_t node_per_page = 4096 / sizeof(vm_ds_node);
-    vm_ds_node *start_of_page = (vm_ds_node*)vma_allocate_memory_from_tree(&kernel_vma_heap_tree_root, 4096, VMA_REGULAR, PT_GLOBAL | PT_WRITEABLE | PT_NX, NULL);
+    vm_ds_node *start_of_page = (vm_ds_node*)vma_allocate_memory_from_tree(&kernel_vma_heap_tree, 4096, VMA_REGULAR, PT_GLOBAL | PT_WRITEABLE | PT_NX, NULL);
 
     //We then set them up to be put in our free list. We go until the before-last one. The last will point to the other list, handled outside this loop.
     for (uint32_t i = 0; i < node_per_page - 1; i++) {
@@ -313,7 +311,7 @@ void replenish_slab_from_tree() {
     free_list = start_of_page;
 }
 
-vm_ds_node *alloc_vm_ds_node() {
+static vm_ds_node *alloc_vm_ds_node() {
     //We start by getting the node we will return from our freelist.
     vm_ds_node *node_to_allocate = free_list;
     free_list = (vm_ds_node*)free_list->start_addr;
@@ -331,319 +329,63 @@ vm_ds_node *alloc_vm_ds_node() {
     return node_to_allocate;
 }
 
-void free_vm_ds_node(vm_ds_node *node) {
+static void free_vm_ds_node(vm_ds_node *node) {
     node->start_addr = (uint64_t)free_list;
     free_list = node;
     free_node_count++;
 }
 
-//All VM Data Structure functions are following
-
-void vm_ds_init_node(vm_ds_node *node, uint64_t start, uint64_t size, vm_node_type type) {
+static void init_vm_ds_node(vm_ds_node *node, uint64_t start, uint64_t size, vm_node_type type, avl_update_t update_callback) {
     node->start_addr = start;
     node->size = size;
     node->type = type;
-    
-    node->parent = NULL;
-    node->left = NULL;
-    node->right = NULL;
-
-    node->subtree_max_depth = 0;
     node->subtree_max_free_slot = size;
+    avl_init((avl_node_t*)node, update_callback);
 }
 
-vm_ds_node *vm_ds_insert(vm_ds_node *root, vm_ds_node *node_to_insert) {
-    //In case root changes due to balance, etc.
-    vm_ds_node *new_root = root;
-    //The parent pointer on the to-be-inserted node. Will be the real parent since the real one is the last to update this.
-    node_to_insert->parent = root;
-    //We figure out if we need to go as left or right of this, and add it as a child if we can slot it as leaf.
-    uint64_t start_to_insert = node_to_insert->start_addr;
-    if (start_to_insert < root->start_addr){
-        if (root->left) root->left = vm_ds_insert(root->left, node_to_insert);
-        else {
-            root->left = node_to_insert;
-            node_to_insert->parent = root;
-        }
-    } 
-    else if (start_to_insert >= root->start_addr) {
-        if (root->right) root->right = vm_ds_insert(root->right, node_to_insert);
-        else {
-            root->right = node_to_insert;
-            node_to_insert->parent = root;
-        }
-    }
+//All VM Data Structure functions are following
 
-    //If we get here, we are going back up the call stack. We need to clean up starting at the parent.
-    vm_ds_update(root);
-    new_root = vm_ds_check_and_balance(root);
-    return new_root;
+static void vm_avl_update(avl_node_t *node) {
+    //Cast the node(s) to its subclass, which is the specific vm_ds_node.
+    vm_ds_node *complete_node = (vm_ds_node*)node;
+    vm_ds_node *left = (vm_ds_node*)(node->left);
+    vm_ds_node *right = (vm_ds_node*)(node->right);
+
+    uint64_t max_size_left_subtree = (left) ? left->subtree_max_free_slot : 0;
+    uint64_t max_size_right_subtree = (right) ? right->subtree_max_free_slot : 0;
+    uint64_t node_size_to_be_considered = (complete_node->type == VMA_FREE) ? complete_node->size : 0;
+    complete_node->subtree_max_free_slot = MAX(MAX(max_size_left_subtree, max_size_right_subtree), node_size_to_be_considered);
 }
 
-void vm_ds_update(vm_ds_node *node) {
-    if (!node) return;
-    //Start by calculating the max free slot size for the subtree. It will be either the data from the chilren's subtrees or the node itself may be the biggest.
-    uint64_t max_size_left_subtree = (node->left) ? node->left->subtree_max_free_slot : 0;
-    uint64_t max_size_right_subtree = (node->right) ? node->right->subtree_max_free_slot : 0;
-    uint64_t node_size_to_be_considered = (node->type == VMA_FREE) ? node->size : 0;
-    node->subtree_max_free_slot = MAX(MAX(max_size_left_subtree, max_size_right_subtree), node_size_to_be_considered);
+//Used during insertions.
+static int vm_avl_comp_addr(avl_node_t *node_a, avl_node_t *node_b) {
+    //Cast to full nodes.
+    vm_ds_node *node_a_complete = (vm_ds_node*)(node_a);
+    vm_ds_node *node_b_complete = (vm_ds_node*)(node_b);
 
-    //Max depth calculation. Simply the max of either child, and add 1.
-    int max_depth_left_subtree = (node->left) ? node->left->subtree_max_depth : -1;
-    int max_depth_right_subtree = (node->right) ? node->right->subtree_max_depth : -1;
-    node->subtree_max_depth = MAX(max_depth_left_subtree, max_depth_right_subtree) + 1;
+    return node_a_complete->start_addr - node_b_complete->start_addr;
 }
 
-//Check and balance AVL tree.
-vm_ds_node *vm_ds_check_and_balance(vm_ds_node *node) {
-    vm_ds_node *subtree_root = node;
-    int balance = vm_ds_get_balance_factor(node);
+//Used to find a node from an address which may be within the bounds of sstart_addr + size.
+static int vm_avl_comp_addr_space(avl_node_t *node_a, avl_node_t *node_b) {
+    //Cast to full nodes.
+    vm_ds_node *node_a_complete = (vm_ds_node*)(node_a);
+    vm_ds_node *node_b_complete = (vm_ds_node*)(node_b);
 
-    //Check for imbalances.
-    //If ok, simply return.
-    if (balance < 2 && balance > -2) return subtree_root;
-    //If not, start by checking if it is a left side imbalance.
-    if (balance > 0) {
-        //Check if it is a left-left imbalance. If the balance of that node is positive, it means that the left child's subtree is imbalanced on the left side.
-        if (vm_ds_get_balance_factor(node->left) > 0) {
-            //If yes, we need a single right rotation.
-            subtree_root = vm_ds_rotate_right(node);
-        }
-        else {
-            //If not, it is left-right. we then need a left rotation, followed by right rotation.
-            node->left = vm_ds_rotate_left(node->left);
-            subtree_root = vm_ds_rotate_right(node);
-        }
-    }
-    //If not left side, then we know its a right imbalance.
-    else {
-        //We check for right-right or right-left imbalance.
-        if (vm_ds_get_balance_factor(node->right) < 0) {
-            //Right right can be solved with a left rotation on the current node.
-            subtree_root = vm_ds_rotate_left(node);
-        }
-        else {
-            //Right left is fixed by right rotation on the right child, followed by left rotation on parent.
-            node->right = vm_ds_rotate_right(node->right);
-            subtree_root = vm_ds_rotate_left(node);
-        }
-    }
-
-    return subtree_root;
+    if (node_a_complete->start_addr <= node_b_complete->start_addr && node_a_complete->start_addr + node_a_complete->size > node_b_complete->start_addr) return 0;
+    if (node_a_complete->start_addr > node_b_complete->start_addr) return 1;
+    return -1;
 }
 
-int vm_ds_get_balance_factor(vm_ds_node *node) {
-    //Start by getting the max depth of the right or left subtree, including parent node.
-    uint64_t max_depth_left_subtree = (node->left) ? node->left->subtree_max_depth + 1 : 0;
-    uint64_t max_depth_right_subtree = (node->right) ? node->right->subtree_max_depth + 1 : 0;
-    //Calculate the balance, AKA left - right subtree max size.
-    return max_depth_left_subtree - max_depth_right_subtree;
-}
-
-vm_ds_node *vm_ds_rotate_right(vm_ds_node *node) {
-    //A right rotation will make the left child the new subtree root.
-    vm_ds_node *new_subtree_root = node->left;
-    //Get the current subtree's parent. Null if this is the whole tree.
-    vm_ds_node *subtree_parent = node->parent;
-
-    //The current root will take the left child's right child as its left child.
-    node->left = node->left->right;
-    if (node->left) node->left->parent = node;
-
-    //The new subtree root which used to be the node's left child will take the node as it's right child.
-    new_subtree_root->right = node;
-    
-    //Update the parents for both the node and new root.
-    new_subtree_root->parent = subtree_parent;
-    node->parent = new_subtree_root;
-
-    //Make sure to update the new root's kids and itself.
-    vm_ds_update(new_subtree_root->left);
-    vm_ds_update(new_subtree_root->right);
-    vm_ds_update(new_subtree_root);
-    return new_subtree_root;
-}
-
-vm_ds_node *vm_ds_rotate_left(vm_ds_node *node) {
-    //A left rotation will make the right child the new subtree root.
-    vm_ds_node *new_subtree_root = node->right;
-    //Get the current subtree's parent. Null if root of complete tree.
-    vm_ds_node *subtree_parent = node->parent;
-
-    //The current node will take the right child's left child as it's right child.
-    node->right = node->right->left;
-    if (node->right) node->right->parent = node;
-
-    //The new subtree root which used to be the node's right child will take the node as it's left child.
-    new_subtree_root->left = node;
-
-    //Update the parents for both the node and new root.
-    new_subtree_root->parent = subtree_parent;
-    node->parent = new_subtree_root;
-
-    //Make sure to update the new root's kids and itself.
-    vm_ds_update(new_subtree_root->left);
-    vm_ds_update(new_subtree_root->right);
-    vm_ds_update(new_subtree_root);
-    return new_subtree_root;
-}
-
-vm_ds_node *vm_ds_bubble_update_and_balance(vm_ds_node *node) {
-    if (!node) return NULL;
-    while (1) {
-        //Start by updating the data for this node.
-        vm_ds_update(node);
-
-        //Then, we need to keep track of the old node we were on to keep it's pointer.
-        vm_ds_node *old_node = node;
-
-        //Node may get overwritten since it would be the new root of the subtree.
-        node = vm_ds_check_and_balance(node);
-
-        //When we reach the root, 
-        if (!node->parent) return node;
-
-        //We need to manually update the parent node's children to reflect the new subtree root. Make sure to check against the old root to update the proper child.
-        if (old_node == node->parent->left) node->parent->left = node;
-        else node->parent->right = node;
-
-        node = node->parent;
-    }
-}
-
-vm_ds_node *vm_ds_get_node(vm_ds_node *root, uint64_t addr) {
-    if (!root) return NULL;
-    if (root->start_addr <= addr && root->start_addr + root->size > addr) return root;
-    if (root->start_addr > addr) return vm_ds_get_node(root->left, addr);
-    return vm_ds_get_node(root->right, addr);
-}
-
-//Function is not responsible for freeing the node! Do not lose the pointer!
-vm_ds_node *vm_ds_remove(vm_ds_node *root, vm_ds_node *node_to_remove) {
-    //We keep a reference to the deepest node we need to bauble updates at the end.
-    vm_ds_node *node_to_update = NULL;
-
-    //We will start by checking what type of deletion we will be dealing with.
-    //Type 1: No children
-    if (!node_to_remove->left && !node_to_remove->right) {
-        //Easiest one. Simply make the parent point to nothing. 
-        if (node_to_remove->parent->left == node_to_remove) node_to_remove->parent->left = NULL;
-        else node_to_remove->parent->right = NULL;
-        node_to_update = node_to_remove->parent;
-    }
-    //Type 3: 2 Children
-    else if (node_to_remove->left && node_to_remove->right) {
-        //Complicated one. We need to replace this node with its inorder successor. (Smallest node in right subtree)
-        //So, lets start by finding this successor:
-        vm_ds_node *victim_node = vm_ds_get_successor(node_to_remove);
-
-        //Now, we have the victim. This node itself will have to be "deleted" from the tree. It will then be manually added back here.
-        //This wont be a infinite recursive loop since the successor will not have a left child.
-        vm_ds_remove(root, victim_node);
-
-        //Now, we simply make the victim take its place by making the to-be-deleted node's parent point to it and it point to the kids.
-        victim_node->left = node_to_remove->left;
-        victim_node->left->parent = victim_node;
-
-        victim_node->right = node_to_remove->right;
-        victim_node->right->parent = victim_node;
-
-        victim_node->parent = node_to_remove->parent;
-
-        node_to_update = victim_node;
-    }
-    //Type 2: 1 Child
-    else {
-        //Simply make the parent point to this node's child.
-        vm_ds_node *child;
-        child = (node_to_remove->left) ? node_to_remove->left : node_to_remove->right;
-        child->parent = node_to_remove->parent;
-        if (node_to_remove->parent->left == node_to_remove) node_to_remove->parent->left = child;
-        else node_to_remove->parent->right = child;
-        node_to_update = node_to_remove->parent;
-    }
-
-    //Now, its cleanup time!
-    return vm_ds_bubble_update_and_balance(node_to_update);
-}
-
-vm_ds_node *vm_ds_find_worst_fit(vm_ds_node *root, uint64_t size) {
-    //If we get to a state where the max free slot is smaller than size, then no hole can fit the request
-    if (root->subtree_max_free_slot < size) return NULL;
+//Used to find the worst fit.
+static int vm_avl_comp_max_free_slot(avl_node_t *node_a, avl_node_t *node_b) {
+    //Cast to full nodes.
+    vm_ds_node *node_a_complete = (vm_ds_node*)(node_a);
+    vm_ds_node *left = (vm_ds_node*)(node_a->left);
+    vm_ds_node *right = (vm_ds_node*)(node_a->right);
 
     //Now, we want the max_free_slot so we find it :)
-    if (root->size == root->subtree_max_free_slot && root->type == VMA_FREE) return root;
-    if (root->left && root->left->subtree_max_free_slot == root->subtree_max_free_slot) return vm_ds_find_worst_fit(root->left, size);
-    if (root->right && root->right->subtree_max_free_slot == root->subtree_max_free_slot) return vm_ds_find_worst_fit(root->right, size);
-
-    //A return in case the tree is broken or something.
-    return NULL;
-}
-
-vm_ds_node *vm_ds_get_predecessor(vm_ds_node *node) {
-    vm_ds_node *predecessor = NULL;
-
-    if (node->left != NULL) {
-        //Case A: If there is a left child, go left once, then all the way right
-        predecessor = node->left;
-        while (predecessor->right != NULL) {
-            predecessor = predecessor->right;
-        }
-    } else {
-        //Case B: No left child. Walk up the parent chain until you find that the subtree we came from was parent's right child.
-        vm_ds_node *curr = node;
-        vm_ds_node *p = node->parent;
-        while (p != NULL && curr == p->left) {
-            curr = p;
-            p = p->parent;
-        }
-        predecessor = p;
-    }
-
-    return predecessor;
-}
-
-
-vm_ds_node *vm_ds_get_successor(vm_ds_node *node) {
-    vm_ds_node *successor = NULL;
-
-    if (node->right != NULL) {
-        //Case A: If there is a right child, go right once, then all the way left
-        successor = node->right;
-        while (successor->left != NULL) {
-            successor = successor->left;
-        }
-    } else {
-        // Case B: No right child. Walk up the parent chain until you find that the subtree we came from was parent's left child.
-        vm_ds_node *curr = node;
-        vm_ds_node *p = node->parent;
-        while (p != NULL && curr == p->right) {
-            curr = p;
-            p = p->parent;
-        }
-        successor = p;
-    }
-
-    return successor;
-}
-
-static void vma_print_tree(vm_ds_node *root) {
-    //Start with left child.
-    if (root->left) vma_print_tree(root->left);
-
-    //Now, we do the root itself.
-    kprintf("\nNext Node!\n");
-    kprintf("Node address: %lx\n", (uint64_t)root);
-    kprintf("Node parent: %lx\n", (uint64_t)root->parent);
-    kprintf("Node left: %lx\n", (uint64_t)root->left);
-    kprintf("Node right: %lx\n", (uint64_t)root->right);
-    kprintf("Start_address: %lx\n", root->start_addr);
-    kprintf("Size: %lx\n", root->size);
-    kprintf("Type: %u\n", root->type);
-    kprintf("Flags: %lx\n", root->flags);
-    kprintf("Max free slot subtree: %lx\n", root->subtree_max_free_slot);
-    kprintf("Max depth subtree: %lx\n", root->subtree_max_depth);
-
-    //Then right child.
-    if (root->right) vma_print_tree(root->right);
+    if (node_a_complete->size == node_a_complete->subtree_max_free_slot && node_a_complete->type == VMA_FREE) return 0;
+    if (node_a->left && left->subtree_max_free_slot == node_a_complete->subtree_max_free_slot) return 1;
+    return -1;
 }
