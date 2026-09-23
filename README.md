@@ -20,7 +20,7 @@ The goal of this project is to build a microkernel from first principles.
 - [x] Memory allocation systems (physical and virtual) with heap allocator (kmalloc)
 - [x] Simple AHCI Driver (Polling)
 - [x] LBD
-- [ ] Virtual File System (VFS) layout
+- [x] Virtual File System (VFS) layout
 - [ ] Basic FAT32 Driver
 - [ ] Multitasking & Context Switching (Ring 3 userspace isolation)
 - [ ] Advanced drivers (interrupts)
