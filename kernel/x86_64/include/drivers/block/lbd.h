@@ -23,6 +23,7 @@ typedef struct {
 
 typedef struct {
     uint64_t total_sectors;
+    uint64_t start_lba;
     uint32_t logical_sector_size_bytes;
     uint32_t physical_sector_size_bytes;
     uint16_t logical_alignment_offset;

@@ -592,6 +592,7 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 	drive->driver_api = &ahci_api;
 
 	drive->device_info.total_sectors = sector_count;
+	drive->device_info.start_lba = 0;
 	drive->device_info.logical_sector_size_bytes = logical_sector_size;
 	drive->device_info.physical_sector_size_bytes = physical_sector_size;
 	drive->device_info.logical_alignment_offset = sector_offset;

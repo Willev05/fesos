@@ -26,6 +26,7 @@ void lbd_register_drive(lbd_logical_drive_t *logical_drive) {
 
 int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
+    uint64_t absolute_lba = lba + logical_drive->device_info.start_lba;
     LOG_D("Processing read request for drive %u.\n", drive_no);
     //Check if the no is valid
     if (!logical_drive) {
@@ -38,8 +39,8 @@ int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
         return -EINVAL;
     } 
     //Check if the lba + count goes past the sector count
-    if (lba + count >= logical_drive->device_info.total_sectors) {
-        LOG_E("Invalid LBA! Requested read starting at LBA %lu over %lu sectors, going outside the bounds of the drive's sector count of %lu.\n", lba, count, logical_drive->device_info.total_sectors);
+    if (absolute_lba + count >= logical_drive->device_info.total_sectors) {
+        LOG_E("Invalid LBA! Requested read starting at LBA %lu over %lu sectors, going outside the bounds of the drive's sector count of %lu.\n", absolute_lba, count, logical_drive->device_info.total_sectors);
         return -EINVAL;
     } 
 
@@ -63,7 +64,7 @@ int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
         }
 
         //Then, call the driver.
-        int read_errno = logical_drive->driver_api->read(logical_drive, lba, count, scatter_block.virtual_addr);
+        int read_errno = logical_drive->driver_api->read(logical_drive, absolute_lba, count, scatter_block.virtual_addr);
         if (read_errno) {
             //Error happened. Free everything and return the same code up the call stack.
             LOG_E("Driver returned error code. Freeing resources and returning.\n");
@@ -79,7 +80,7 @@ int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     }
 
     else {
-        int read_errno = logical_drive->driver_api->read(logical_drive, lba, count, buffer);
+        int read_errno = logical_drive->driver_api->read(logical_drive, absolute_lba, count, buffer);
         LOG_D("Read request completed.\n");
         return read_errno;
     }
@@ -87,6 +88,7 @@ int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
 
 int lbd_write(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
+    uint64_t absolute_lba = lba + logical_drive->device_info.start_lba;
     LOG_D("Processing write request for drive %u.\n", drive_no);
     //Check if the no is valid
     if (!logical_drive) {
@@ -99,8 +101,8 @@ int lbd_write(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
         return -EINVAL;
     } 
     //Check if the lba + count goes past the sector count
-    if (lba + count >= logical_drive->device_info.total_sectors) {
-        LOG_E("Invalid LBA! Requested write starting at LBA %lu over %lu sectors, going outside the bounds of the drive's sector count of %lu.\n", lba, count, logical_drive->device_info.total_sectors);
+    if (absolute_lba + count >= logical_drive->device_info.total_sectors) {
+        LOG_E("Invalid LBA! Requested write starting at LBA %lu over %lu sectors, going outside the bounds of the drive's sector count of %lu.\n", absolute_lba, count, logical_drive->device_info.total_sectors);
         return -EINVAL;
     } 
     //Check if drive even allows writes.
@@ -132,7 +134,7 @@ int lbd_write(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
         memcpy(scatter_block.virtual_addr, buffer, count * logical_drive->device_info.logical_sector_size_bytes);
 
         //Then, call the driver.
-        int write_errno = logical_drive->driver_api->write(logical_drive, lba, count, scatter_block.virtual_addr);
+        int write_errno = logical_drive->driver_api->write(logical_drive, absolute_lba, count, scatter_block.virtual_addr);
         if (write_errno) {
             //Error happened. Free everything and return the same code up the call stack.
             LOG_E("Driver returned error code. Freeing resources and returning.\n");
@@ -146,7 +148,7 @@ int lbd_write(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     }
 
     else {
-        int write_errno = logical_drive->driver_api->write(logical_drive, lba, count, buffer);
+        int write_errno = logical_drive->driver_api->write(logical_drive, absolute_lba, count, buffer);
         LOG_D("Write request completed.\n");
         return write_errno;
     }
