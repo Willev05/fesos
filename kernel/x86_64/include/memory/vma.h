@@ -8,11 +8,11 @@
 
 //Type of node in vm_ds_node.
 typedef enum {
-    VMA_FREE,
-    VMA_REGULAR,
-    VMA_FILE_BACKED,
-    VMA_HARDWARE_MMIO,
-    VMA_UNMANAGED_MAPPING
+    VMA_FREE, //Should not be in alloc request.
+    VMA_REGULAR, //Regular user memory. Lifecycle handled by VMA. Supports demand paging.
+    VMA_FILE_BACKED, //File backed memory. Lifecylce handled by VMA. Supports demand paging.
+    VMA_HARDWARE_MMIO, //Memory Mapped IO. Lifecycle handled by VMA. No demand paging, pinned ASAP. PMM will not be used, physical address assumed to be blocked in bitmap.
+    VMA_UNMANAGED_MAPPING //Unmanaged mapping for memory. VMA will simply reserve the required virtual memory block in it's tree. VMM and PMM will not be contacted by VMA. Used when lifecycle, and more granular control over mappings are required.
 } __attribute__((packed)) vm_node_type;
 
 typedef enum {

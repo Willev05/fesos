@@ -5,6 +5,12 @@
 #include <drivers/serial.h>
 #include <common/stdstr.h>
 
+/**
+ * @brief Printf for the kernel using varargs.
+ * @param fmt The format string.
+ * @param ... The additional values to sub into the format string.
+ * @return 0 on success.
+ */
 int kprintf(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -13,6 +19,12 @@ int kprintf(const char* fmt, ...) {
     return 0;
 }
 
+/**
+ * @brief Printf for the kernel using a va_list.
+ * @param fmt The format string.
+ * @param args The argument list.
+ * @return 0 on success.
+ */
 int vkprintf(const char *fmt, va_list args) {
     static char buffer[32];
 

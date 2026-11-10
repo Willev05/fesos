@@ -14,6 +14,10 @@
 static lbd_logical_drive_t *lbd_drives[LOGICAL_DRIVE_ARRAY_SIZE];
 static uint8_t next_drive_num = 0;
 
+/**
+ * @brief Register a drive with the LBD manager. Will set the drive number for you.
+ * @param logical_drive A pointer to the logical driver to register.
+ */
 void lbd_register_drive(lbd_logical_drive_t *logical_drive) {
     if (next_drive_num >= LOGICAL_DRIVE_ARRAY_SIZE) {
         LOG_E("Unable to register new drive. Array is full.\n");
@@ -24,6 +28,14 @@ void lbd_register_drive(lbd_logical_drive_t *logical_drive) {
     LOG_I("Registered new drive: Drive number: %u, Drive name (from driver): %s\n", drive_num, logical_drive->drive_name);
 }
 
+/**
+ * @brief Read function for an LBD drive. This will take a request, perform checks, bounce buffer if required, and get the absolute LBA to pass to drivers.
+ * @param drive_no The drive number to read. 
+ * @param lba The logical block address to read from. 
+ * @param count The count of sectors to read, starting at `lba`.
+ * @param buffer A pointer to a SUFFICIENTLY LARGE BUFFER to store the information. IF BUFFER TOO SMALL, DATA CORRUPTION WILL OCCUR.
+ * @return 0 on success, error code on error from either this function, or the underlying driver.
+ */
 int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
     uint64_t absolute_lba = lba + logical_drive->device_info.start_lba;
@@ -92,6 +104,14 @@ int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     }
 }
 
+/**
+ * @brief Write function for an LBD drive. This will take a request, perform checks, bounce buffer if required, and get the absolute LBA to pass to drivers.
+ * @param drive_no The drive number to write to. 
+ * @param lba The logical block address to write to. 
+ * @param count The count of sectors to write, starting at `lba`.
+ * @param buffer A pointer to a SUFFICIENTLY LARGE BUFFER to read the information from. IF BUFFER TOO SMALL, INVALID DATA WILL BE READ.
+ * @return 0 on success, error code on error from either this function, or the underlying driver.
+ */
 int lbd_write(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
     uint64_t absolute_lba = lba + logical_drive->device_info.start_lba;
@@ -166,6 +186,11 @@ int lbd_write(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     }
 }
 
+/**
+ * @brief The flush function for an lbd drive. Will call flush on the underlying driver if supported.
+ * @param drive_no The drive number to flush.
+ * @return 0 on success, error code on error from either this function, or the underlying driver.
+ */
 int lbd_flush(uint8_t drive_no) {
     lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
 

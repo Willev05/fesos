@@ -33,6 +33,11 @@ static int vm_avl_comp_addr(avl_node_t *node_a, avl_node_t *node_b);
 static int vm_avl_comp_addr_space(avl_node_t *node_a, avl_node_t *node_b);
 static int vm_avl_comp_max_free_slot(avl_node_t *node_a, avl_node_t *node_b);
 
+/**
+ * @brief Handles the demand paging for `fault_address`.
+ * @param fault_address The address of the fault, in virtual space.
+ * @return 0 on success, 1 on error (Not in tree, not of proper allocation type). 
+ */
 uint8_t vma_demand_paging(uint64_t fault_addr) {
     vm_ds_node temp_key;
     temp_key.start_addr = fault_addr;
@@ -59,6 +64,9 @@ uint8_t vma_demand_paging(uint64_t fault_addr) {
     return 0;
 }
 
+/**
+ * @brief Initializes the VMA with slab allocator for the nodes.
+ */
 void vma_init() {
     //We need to initialize the kernel VMA tree. For this, we need a page to hold our starting nodes for the tree.
     //We request a page from the PMM then map it to the base of the heap.
@@ -98,15 +106,31 @@ void vma_init() {
     kernel_vma_mmio_tree.root = (avl_node_t*)kernel_vma_mmio_tree_root;
 }
 
+/**
+ * @brief Frees an allocated block of memory from the kernel's tree.
+ * @param start_addr The start address of the memory block to delete.
+ */
 void vma_free_memory_from_ktree(uint64_t start_addr) {
     if (start_addr >= KERNEL_HEAP_START && start_addr < KERNEL_HEAP_LIMIT) vma_free_memory_from_tree(&kernel_vma_heap_tree, start_addr);
     else if (start_addr >= KERNEL_MMIO_START && start_addr < KERNEL_MMIO_LIMIT) vma_free_memory_from_tree(&kernel_vma_mmio_tree, start_addr);
 }
 
+/**
+ * @brief Frees an allocated block of memory from the user's tree.
+ * @param start_addr The start address of the memory block to delete.
+ */
 void vma_free_memory_from_utree(uint64_t start_addr) {
     return; //TODO: Implement when user space exists
 }
 
+/**
+ * @brief Allocate memory from the kernel's tree. 
+ * @param size The size in bytes for the allocation. 
+ * @param allocation_type The vma node type. Check struct def for more info.
+ * @param flags Flags to pass to the VMM. Used for demand paging.
+ * @param allocation_backing Pointer to the allocation backing for the file. Must use the right union depanding on `allocation_type`.
+ * @return Pointer to the first page of allocated memory. Returns NULL on error.
+ */
 void *vma_allocate_memory_from_ktree(uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
 
     //We allocate to the heap tree unless it is an MMIO request. When unmanaged, the kernel trees are either MMIO tree or HEAP.
@@ -119,6 +143,14 @@ void *vma_allocate_memory_from_ktree(uint64_t size, vm_node_type allocation_type
     return vma_allocate_memory_from_tree(&kernel_vma_heap_tree, size, allocation_type, flags, allocation_backing);
 }
 
+/**
+ * @brief Allocate memory from the user's tree. 
+ * @param size The size in bytes for the allocation. 
+ * @param allocation_type The vma node type. Check struct def for more info.
+ * @param flags Flags to pass to the VMM. Used for demand paging.
+ * @param allocation_backing Pointer to the allocation backing for the file. Must use the right union depanding on `allocation_type`.
+ * @return Pointer to the first page of allocated memory. Returns NULL on error.
+ */
 void *vma_allocate_memory_from_utree(uint64_t size, vm_node_type allocation_type, uint32_t flags, vma_backing *allocation_backing) {
     return NULL; //TODO: Implement when userspace exists
 }

@@ -16,13 +16,20 @@ void serial_init() {
     outb(COM1 + 2, 0xC7); //Sets the FIFO to on, and resets them
 }
 
-//Send a single character to the port. 
+/**
+ * @brief Send a single character over COM1. 
+ * @param c The character to send.
+ */
 void serial_putc(char c) {
     //Busy wait while checking the 5th bit, where 1 is there is space in the buffer, 0 is there is not.
     while (!(inb(COM1 + 5) & 0x20));
     outb(COM1, c);
 }
 
+/**
+ * @brief Sends a string over COM1.
+ * @param s The string to send.
+ */
 void serial_puts(char *s) {
     for (int i = 0; s[i]; i++){
         serial_putc(s[i]);

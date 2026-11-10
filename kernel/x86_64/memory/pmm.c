@@ -22,7 +22,10 @@ static void unset_bitmap_bit(uint64_t bit_number);
 static uint8_t get_bitmap_bit(uint64_t bit_number);
 static void pmm_zero_page(uint64_t p_addr);
 
-//Initialize the PMM. 
+/**
+ * @brief Initialize the pmm from the bootloader's bitmap.
+ * @param bi_v The virtual address pointing to the boot info struct. 
+ */
 void pmm_init(uint64_t bi_v) {
     boot_info *bi = (boot_info*)bi_v;
     bitmap = (uint8_t*)(bi->memory_bitmap_address + DIRECT_MAP_BASE);
@@ -34,7 +37,12 @@ void pmm_init(uint64_t bi_v) {
     LOG_I("Memory map ready. Total usable RAM: %lu MiB.\n", (memory_total_frame_count * 0x1000) / 0x100000);
 }
 
-//Need to implement allignment support.
+/**
+ * @brief Allocates `count` contiguous frames with `alignment` in bytes.
+ * @param count The count of contiguous frames to allocate.
+ * @param alignment The alignment in bytes to start on. Frame alligned (4096), rounded down if needed.
+ * @return Pointer to the first frame allocated (in physical address space), NULL if error.
+ */
 void *pmm_allocate_frames(uint64_t count, uint64_t alignment) {
     //If count is 0, just return as cannot allocate 0 pages.
     if (!count) return NULL;
@@ -105,6 +113,11 @@ void *pmm_allocate_frames(uint64_t count, uint64_t alignment) {
     return NULL;
 }
 
+/**
+ * @brief Frees `count` contiguous frames, starting at start_address`.
+ * @param start_address A pointer to the start address for which to free, in physical space.
+ * @param count The count of frames to free.
+ */
 void pmm_free_frames(void *start_address, uint64_t count) {
     if (!count) return; 
     uint64_t final_frame = (uint64_t)start_address / 4096 + count;

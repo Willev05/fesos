@@ -7,10 +7,18 @@
 
 static uint32_t subsystem_mask = 0;
 
+/**
+ * @brief Enables logging for the specific subsystem, using the bitmask `subsystem_bit`. 
+ * @param subsystem_bit The bitmask to apply to the debug masking.
+ */
 void log_enable_subsystem_debug(log_subsystem_t subsystem_bit) {
     subsystem_mask |= subsystem_bit;
 }
 
+/**
+ * @brief Disables logging for the specific subsystem, using the bitmask `subsystem_bit`. 
+ * @param subsystem_bit The bitmask to apply to the debug masking.
+ */
 void log_disable_subsystem_debug(log_subsystem_t subsystem_bit) {
     subsystem_mask &= ~subsystem_bit;
 }
