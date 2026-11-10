@@ -27,6 +27,12 @@ void lbd_register_drive(lbd_logical_drive_t *logical_drive) {
 int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
     uint64_t absolute_lba = lba + logical_drive->device_info.start_lba;
+
+    //Parent check. If drive has a parent, pass the request upwards.
+    if (logical_drive->parent_drive != NULL) {
+        return lbd_read(logical_drive->parent_drive->drive_no, absolute_lba, count, buffer);
+    }
+
     LOG_D("Processing read request for drive %u.\n", drive_no);
     //Check if the no is valid
     if (!logical_drive) {
@@ -89,6 +95,12 @@ int lbd_read(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
 int lbd_write(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
     lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
     uint64_t absolute_lba = lba + logical_drive->device_info.start_lba;
+
+    //Parent check. If drive has a parent, pass the request upwards.
+    if (logical_drive->parent_drive != NULL) {
+        return lbd_write(logical_drive->parent_drive->drive_no, absolute_lba, count, buffer);
+    }
+
     LOG_D("Processing write request for drive %u.\n", drive_no);
     //Check if the no is valid
     if (!logical_drive) {
@@ -156,6 +168,12 @@ int lbd_write(uint8_t drive_no, uint64_t lba, uint64_t count, void *buffer) {
 
 int lbd_flush(uint8_t drive_no) {
     lbd_logical_drive_t *logical_drive = lbd_drives[drive_no];
+
+    //Parent check. If drive has a parent, pass the request upwards.
+    if (logical_drive->parent_drive != NULL) {
+        return lbd_flush(logical_drive->parent_drive->drive_no);
+    }
+
     LOG_D("Processing flush request for drive %u.\n", drive_no);
     //Check if the no is valid
     if (!logical_drive) {

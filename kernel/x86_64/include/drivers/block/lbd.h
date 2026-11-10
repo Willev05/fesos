@@ -34,6 +34,7 @@ typedef struct {
 struct _lbd_logical_drive {
     const lbd_driver_api_t *driver_api;
     lbd_device_info_t device_info;
+    struct _lbd_logical_drive *parent_drive;
     void *driver_data;
     char drive_name[40];
     uint8_t drive_no; //To be filled by the LBD.
