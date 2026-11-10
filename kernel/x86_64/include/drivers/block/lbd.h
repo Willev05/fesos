@@ -36,7 +36,9 @@ struct _lbd_logical_drive {
     lbd_device_info_t device_info;
     struct _lbd_logical_drive *parent_drive;
     void *driver_data;
-    char drive_name[40];
+    char name[32];
+    char model_string[40];
+    uint8_t guid[16]; //To be filled by partition manager.
     uint8_t drive_no; //To be filled by the LBD.
 };
 
