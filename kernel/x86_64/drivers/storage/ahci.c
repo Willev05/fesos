@@ -15,6 +15,7 @@
 #include <common/math.h>
 #include <memory/memory.h>
 #include <common/logging.h>
+#include <common/printf.h>
 
 typedef volatile struct tagHBA_PORT
 {
@@ -239,6 +240,8 @@ typedef enum {
 	AHCI_PORT_NOT_IMPLEMENTED,
 	AHCI_PORT_OUT_OF_MEMORY
 } ahci_port_return_t;
+
+static uint16_t next_disk_index = 0;
 
 static int ahci_read(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, void *buffer);
 static int ahci_write(lbd_logical_drive_t *logical_drive, uint64_t lba, uint64_t count, const void *buffer);
@@ -608,8 +611,10 @@ static ahci_port_return_t ahci_init_port(uint8_t port_num, HBA_MEM *hba) {
 
 	char *raw_bytes = (char*)id_data;
 	for (uint8_t i = 0; i < 40; i++) {
-		drive->drive_name[i] = raw_bytes[54 + i];
+		drive->model_string[i] = raw_bytes[54 + i];
 	}
+
+	snkprintf(drive->name, 32, "ahci%u", next_disk_index);
 
 	LOG_I("Port %u: Driver ready for LBD registering.\n", port_num);
 

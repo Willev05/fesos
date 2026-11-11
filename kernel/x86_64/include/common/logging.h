@@ -21,6 +21,7 @@ typedef enum {
     LOG_SYS_INTERRUPT = (1 << 6), //Handles interrupt handlers.
     LOG_SYS_DRIVERS = (1 << 7), //Handles drivers.h and other driver registry systems.
     LOG_SYS_VFS = (1 << 8), //VFS
+    LOG_SYS_FS = (1 << 9), //FS registry and other FS drivers.
 
     LOG_SYS_NONE = 0,
     LOG_SYS_ALL = 0xFFFFFFFF

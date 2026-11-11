@@ -1,16 +1,19 @@
 /* File: fs.c */
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
+#define CURRENT_LOG_SYS LOG_SYS_FS
+#define CURRENT_LOG_NAME "fs registry"
 
 #include <drivers/fs/fs.h>
 #include <kernel/errno.h>
+#include <common/logging.h>
 
 fs_driver_registry_t fs_driver_registry;
 
 /**
  * @brief Registers a driver to the file system driver registry. Allows driver to be used by vfs and partman.
  * @param driver The actual pci driver struct. 
- * returns 0 on success, EPERM if registry full. 
+ * @return returns 0 on success, EPERM if registry full. 
  */
 int fs_driver_register(fs_driver_t *driver) {
     if (fs_driver_registry.count >= MAX_FS_DRIVERS) {

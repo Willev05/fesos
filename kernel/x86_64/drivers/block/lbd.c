@@ -25,7 +25,7 @@ void lbd_register_drive(lbd_logical_drive_t *logical_drive) {
     uint8_t drive_num = next_drive_num++;
     logical_drive->drive_no = drive_num;
     lbd_drives[drive_num] = logical_drive;
-    LOG_I("Registered new drive: Drive number: %u, Drive name (from driver): %s\n", drive_num, logical_drive->drive_name);
+    LOG_I("Registered new drive: Drive number: %u, Drive name (from driver): %s, Drive model: %s\n", drive_num, logical_drive->name, logical_drive->model_string);
 }
 
 /**

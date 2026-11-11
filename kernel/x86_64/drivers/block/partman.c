@@ -2,7 +2,7 @@
 /* Copyright (C) 2026 William Lévesque */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #define CURRENT_LOG_SYS LOG_SYS_STORAGE
-#define CURRENT_LOG_NAME "LBD"
+#define CURRENT_LOG_NAME "partman"
 #define PARTITION_ARRAY_SIZE 256
 
 #include <drivers/block/partman.h>

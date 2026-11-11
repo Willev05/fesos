@@ -12,7 +12,7 @@
 typedef struct {
     vfs_ops_t *operations;
     fs_probe_t *probe;
-    char name[16]
+    char name[16];
 } fs_driver_t;
 
 typedef struct {
