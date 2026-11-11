@@ -14,5 +14,6 @@ static disk_partition_t *partitions[PARTITION_ARRAY_SIZE];
  * @param drive A pointer to the drive to register as a partition.
  */
 void partman_parse_drive(lbd_logical_drive_t *drive) {
-
+    //So far, only GPT is handled, MBR is not. TODO is add this.
+    
 }

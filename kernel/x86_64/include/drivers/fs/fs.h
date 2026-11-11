@@ -22,4 +22,4 @@ typedef struct {
 
 extern fs_driver_registry_t fs_driver_registry;
 
-int drivers_pci_register(fs_driver_t driver);
+int fs_driver_register(fs_driver_t *driver);
