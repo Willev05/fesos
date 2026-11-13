@@ -88,18 +88,25 @@ void kfree(void *ptr) {
     if (ptr == NULL) return;
     //We will start by getting the page descriptor for this returned pointer.
     uint64_t v_addr = (uint64_t)ptr;
-    //We check wether or not the ptr passed was allocated through a page or bucket. If the ptr is page alligned, it was page allocation since buckets will NEVER return a page alligned pointer (since metadata lives there)
-    if ((v_addr & 0xFFF) == 0){
-        LOG_D("Kfree request of address %lx was of type page allocation due to size (guessed through address being page aligned). PAssing straight to VMA free.\n", v_addr);
-        vma_free_memory_from_ktree(v_addr);
-        return;
-    } 
 
     //Check to see if the adddress is even allocated to prevent page faults.
     if (!vma_check_ktree(v_addr)){
         LOG_W("Address %lx not found in kernel tree. Returning.\n", v_addr);
         return;
     }
+
+    //We check wether or not the ptr passed was allocated through a page or bucket. If the ptr is page alligned, it was page allocation since buckets will NEVER return a page alligned pointer (since metadata lives there)
+    if ((v_addr & 0xFFF) == 0){
+        //Check to see if the address returned is a page allocated one and not a bucket's page.
+        if (*((uint64_t*)v_addr) == KMALLOC_PAGE_DESCRIPTOR_MAGIC_NUMBER) {
+            //Return, the address is invalid.
+            LOG_W("Address %lx is not an address allocated by kmalloc. Page alligned address points to a bucket page. Returning.\n", v_addr);
+            return;
+        }
+        LOG_D("Kfree request of address %lx was of type page allocation due to size (guessed through address being page aligned). PAssing straight to VMA free.\n", v_addr);
+        vma_free_memory_from_ktree(v_addr);
+        return;
+    } 
 
     kmalloc_page_descriptor_t *page_descriptor = (kmalloc_page_descriptor_t*)(v_addr & ~(0xFFFULL));
     //Check the metadata, see if it is actually a page for malloc.
@@ -109,6 +116,18 @@ void kfree(void *ptr) {
     }
 
     uint8_t bucket_index = page_descriptor->bucket_index;
+
+    //Check to see if the address points to the inside of a descriptor block.
+    if (v_addr < (v_addr & ~0xFFF) + sizeof(kmalloc_page_descriptor_t)) {
+        LOG_W("Address %lx is not an address allocated by kmalloc. Address points inside the page descriptor. Returning\n", v_addr);
+        return;
+    }
+
+    //Check to see if the address is alligned. If a 32 byte allocation, is it alliged to a block?
+    if (v_addr % buckets[page_descriptor->bucket_index].bucket_size != 0) {
+        LOG_W("Address %lx is not an address allocated by kmalloc. Address not aligned to proper block boundary for bucket size %lu. Returning.\n", v_addr, buckets[page_descriptor->bucket_index].bucket_size);
+        return;
+    }
     
     //We then want to internally put this block back in the free list for the page.
     *(uint64_t*)v_addr = page_descriptor->free_list;
