@@ -28,7 +28,7 @@ typedef struct {
     uint16_t reserved1;
     mbr_partition_record_t partition_records[4];
     uint16_t boot_signature;
-} __attribute__((packed)) mbr_partition_table;
+} __attribute__((packed)) mbr_partition_table_t;
 
 typedef struct {
     uint32_t Data1; //Little endian

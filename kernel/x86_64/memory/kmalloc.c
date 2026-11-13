@@ -85,6 +85,7 @@ void *kmalloc(size_t size) {
  * @param ptr A pointer to the memory block to be freed.
  */
 void kfree(void *ptr) {
+    if (ptr == NULL) return;
     //We will start by getting the page descriptor for this returned pointer.
     uint64_t v_addr = (uint64_t)ptr;
     //We check wether or not the ptr passed was allocated through a page or bucket. If the ptr is page alligned, it was page allocation since buckets will NEVER return a page alligned pointer (since metadata lives there)
@@ -94,7 +95,19 @@ void kfree(void *ptr) {
         return;
     } 
 
+    //Check to see if the adddress is even allocated to prevent page faults.
+    if (!vma_check_ktree(v_addr)){
+        LOG_W("Address %lx not found in kernel tree. Returning.\n", v_addr);
+        return;
+    }
+
     kmalloc_page_descriptor_t *page_descriptor = (kmalloc_page_descriptor_t*)(v_addr & ~(0xFFFULL));
+    //Check the metadata, see if it is actually a page for malloc.
+    if (page_descriptor->magic_number != KMALLOC_PAGE_DESCRIPTOR_MAGIC_NUMBER) {
+        LOG_W("Tried to free address %lx not related to kmalloc. Returning.\n", v_addr);
+        return;
+    }
+
     uint8_t bucket_index = page_descriptor->bucket_index;
     
     //We then want to internally put this block back in the free list for the page.
@@ -330,6 +343,7 @@ static uint8_t allocate_page_for_bucket(uint8_t bucket_id) {
     new_page->total_blocks = (4096 - MAX(buckets[bucket_id].bucket_size, sizeof(kmalloc_page_descriptor_t))) / buckets[bucket_id].bucket_size; //This ONLY works since size is 32, which handles 16 bytes perfectly. Then, the bucket size sets itself up perfectly after.
     new_page->blocks_in_use = 0;
     new_page->bucket_index = bucket_id;
+    new_page->magic_number = KMALLOC_PAGE_DESCRIPTOR_MAGIC_NUMBER;
 
     //Now, we need to map the free_list. We can start at the proper offset right after the page header.
     uint64_t current_free_hole = (uint64_t)(new_page) + MAX(buckets[bucket_id].bucket_size, sizeof(kmalloc_page_descriptor_t));

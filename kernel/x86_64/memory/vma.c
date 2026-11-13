@@ -34,6 +34,33 @@ static int vm_avl_comp_addr_space(avl_node_t *node_a, avl_node_t *node_b);
 static int vm_avl_comp_max_free_slot(avl_node_t *node_a, avl_node_t *node_b);
 
 /**
+ * @brief Checks to see if the address exists in the kernel's tree.
+ * @param v_addr The virtual address to check.
+ * @return 0 on false, 1 on true.
+ */
+uint8_t vma_check_ktree(uint64_t v_addr){
+    //Make the key node.
+    vm_ds_node key;
+    avl_node_t *found_node;
+    key.start_addr = v_addr;
+
+    if (v_addr >= KERNEL_HEAP_START && v_addr < KERNEL_HEAP_LIMIT) {
+        found_node = avl_get_node(&kernel_vma_heap_tree, &key, vm_avl_comp_addr_space);
+    }
+    else if (v_addr >= KERNEL_MMIO_START && v_addr < KERNEL_MMIO_LIMIT) {
+        found_node = avl_get_node(&kernel_vma_mmio_tree, &key, vm_avl_comp_addr_space);
+    }
+
+    if (found_node == NULL) {
+        return 0;
+    }
+    if (((vm_ds_node*)found_node)->type == VMA_FREE) {
+        return 0;
+    }
+    return 1;
+}
+
+/**
  * @brief Handles the demand paging for `fault_address`.
  * @param fault_address The address of the fault, in virtual space.
  * @return 0 on success, 1 on error (Not in tree, not of proper allocation type). 

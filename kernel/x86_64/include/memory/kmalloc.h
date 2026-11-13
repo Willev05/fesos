@@ -4,14 +4,16 @@
 #pragma once
 
 #include <common/stdtypes.h>
+#define KMALLOC_PAGE_DESCRIPTOR_MAGIC_NUMBER 0x4B4D414C
 
 typedef struct _kmalloc_page_descriptor {
+    uint32_t magic_number;
     //The index into the buckets array.
     uint8_t bucket_index;
     //The count of blocks in use in the page.
-    uint16_t blocks_in_use;
-    //The count of blocks in use in the page.
-    uint16_t total_blocks;
+    uint8_t blocks_in_use;
+    //The count of blocks in the page.
+    uint8_t total_blocks;
     //A pointer to the first free hole.
     uint64_t free_list;
     //A pointer the the next page descriptor of this bucket type for the either full or free lists.

@@ -10,6 +10,7 @@
 #include <kernel/errno.h>
 #include <memory/memory.h>
 #include <common/stdstr.h>
+#include <drivers/block/partman.h>
 
 static lbd_logical_drive_t *lbd_drives[LOGICAL_DRIVE_ARRAY_SIZE];
 static uint8_t next_drive_num = 0;
@@ -26,6 +27,7 @@ void lbd_register_drive(lbd_logical_drive_t *logical_drive) {
     logical_drive->drive_no = drive_num;
     lbd_drives[drive_num] = logical_drive;
     LOG_I("Registered new drive: Drive number: %u, Drive name (from driver): %s, Drive model: %s\n", drive_num, logical_drive->name, logical_drive->model_string);
+    partman_parse_drive(logical_drive);
 }
 
 /**

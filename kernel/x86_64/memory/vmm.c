@@ -142,15 +142,18 @@ uint64_t vmm_get_physical_from_virtual(uint64_t v_addr) {
     uint16_t PDPT_index = (v_addr >> 30) & 0x1FF;
     uint16_t PD_index = (v_addr >> 21) & 0x1FF;
 
-    page_table *PDPT = vmm_walk_and_crate_next_table(PML4, PML4_index);
-    page_table *PD = vmm_walk_and_crate_next_table(PDPT, PDPT_index);
-    
+    page_table *PDPT = (page_table*)((PML4->entries[PML4_index].bits.physical_address << 12) + DIRECT_MAP_BASE);
+    if (PDPT == NULL) return 0;
+    page_table *PD = (page_table*)((PDPT->entries[PDPT_index].bits.physical_address << 12) + DIRECT_MAP_BASE);
+    if (PD == NULL) return 0;
+
     //Here, we need to check if this will be a huge page or not.
     if (PD->entries[PD_index].bits.huge_page) {
         return PD->entries[PD_index].bits.physical_address << 12;
     }
         
-    page_table *PT = vmm_walk_and_crate_next_table(PD, PD_index);
+    page_table *PT = (page_table*)((PD->entries[PD_index].bits.physical_address << 12) + DIRECT_MAP_BASE);
+    if (PT == NULL) return 0;
 
     uint64_t PT_index = (v_addr >> 12) & 0x1FF;
 
