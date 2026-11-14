@@ -233,7 +233,7 @@ int vmm_pin_pages(uint64_t v_addr, size_t count, uint8_t write_access) {
                 return -EFAULT;
             }
             LOG_D("Page not present, using demand paging.\n");
-            if (!vma_demand_paging(page)) {
+            if (vma_demand_paging(page)) {
                 LOG_E("Demand paging returns that virtual address %lx is invalid. Page pin failed.\n", page);
                 return -EFAULT;
             }

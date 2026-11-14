@@ -82,14 +82,18 @@ $(BOOTLOADER_OBJ_DIR)/jump_to_kernel.o: $(BOOTLOADER_SRC_DIR)/jump_to_kernel.nas
 image:
 	rm -f build/disk.img
 	@RAW_SIZE=$$(($$(du -s -m build/iso | cut -f1) + 12)); \
-	SIZE_MB=$$((RAW_SIZE < 48 ? 48 : RAW_SIZE)); \
+	SIZE_MB=$$((RAW_SIZE < 96 ? 96 : RAW_SIZE)); \
 	echo "Building disk.img with dynamic size: $$SIZE_MB MB"; \
 	dd if=/dev/zero of=build/disk.img bs=1M count=$$SIZE_MB
 	parted -s --align optimal build/disk.img mklabel gpt
-	parted -s --align optimal build/disk.img mkpart ESP fat32 1MiB 100%
+	parted -s --align optimal build/disk.img mkpart ESP fat32 1MiB 48MiB
+	parted -s --align optimal build/disk.img mkpart Ext2Root ext2 48MiB 100%
 	parted -s build/disk.img set 1 esp on
 	mformat -i build/disk.img@@1M -F
 	mcopy -i build/disk.img@@1M -s build/iso/* ::/
+	LOOP_DEV=$$(sudo losetup --find --show -o 50331648 build/disk.img); \
+	sudo mkfs.ext2 -q $${LOOP_DEV}; \
+	sudo losetup -d $${LOOP_DEV}
 
 run:
 	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \

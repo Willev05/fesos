@@ -12,6 +12,8 @@
 
 static disk_partition_t *partitions[PARTITION_ARRAY_SIZE];
 
+static void gpt_utf16_to_ascii(const uint16_t *utf16_src, char *ascii_dest, size_t n);
+
 /**
  * @brief Parses a drive for partitions. Will then register partitions as their own lbd drive.
  * @param drive A pointer to the drive to register as a partition.
@@ -46,7 +48,7 @@ void partman_parse_drive(lbd_logical_drive_t *drive) {
         LOG_E("Could not parse disk %s: GPT header signature invalid.\n", drive->name);
         goto cleanup;
     }
-    LOG_D("Disk %s contains valid GPT table with %u partition entries.\n", drive->name, gpt_header->partition_entry_count);
+    LOG_D("Disk %s contains valid GPT table with %u partition entries, each %u bytes.\n", drive->name, gpt_header->partition_entry_count, gpt_header->partition_entry_size);
 
     //We start parsing the partition entry array.
     volatile gpt_partition_entry_t *partition_entry_ptr = (volatile gpt_partition_entry_t*)kmalloc(gpt_header->partition_entry_size * gpt_header->partition_entry_count);
@@ -59,7 +61,22 @@ void partman_parse_drive(lbd_logical_drive_t *drive) {
     for (int i = 0; i < gpt_header->partition_entry_count; i++) {
         //If 0, then partition entry is unused.
         if (memcmp(&gpt_partition_entry_current->partition_type_guid, &empty_guid, 16) != 0){
-            //TODO
+            LOG_D("Disk %s found partition at entry %lu. Start LBA: %lu, End LBA: %lu\n", drive->name, i + 1, gpt_partition_entry_current->start_lba, gpt_partition_entry_current->end_lba);
+            //Create the LBD representing the partition.
+            lbd_logical_drive_t *partition_drive = (lbd_logical_drive_t*)kmalloc(sizeof(lbd_logical_drive_t));
+            partition_drive->device_info.total_sectors = gpt_partition_entry_current->end_lba - gpt_partition_entry_current->start_lba + 1;
+            partition_drive->device_info.start_lba = gpt_partition_entry_current->start_lba;
+            partition_drive->device_info.logical_sector_size_bytes = logical_sector_size;
+            partition_drive->device_info.physical_sector_size_bytes = drive->device_info.physical_sector_size_bytes;
+            partition_drive->device_info.logical_alignment_offset = drive->device_info.logical_alignment_offset;
+            partition_drive->device_info.max_sectors_per_transfer = drive->device_info.max_sectors_per_transfer;
+            partition_drive->device_info.flags = drive->device_info.flags;
+            partition_drive->parent_drive = drive;
+
+            str_ncpy("Unknown Partition Type", partition_drive->model_string, sizeof(partition_drive->model_string));
+            gpt_utf16_to_ascii(gpt_partition_entry_current->partition_name, partition_drive->name, sizeof(partition_drive->name));
+        
+            lbd_register_drive(partition_drive);
         }
         
         //Next partition entry code.
@@ -72,4 +89,30 @@ cleanup:
     kfree(gpt_header);
     kfree(partition_entry_ptr);
     return;
+}
+
+static void gpt_utf16_to_ascii(const uint16_t *utf16_src, char *ascii_dest, size_t n) {
+    size_t i = 0;
+    //Leave room for the null terminator (-1)
+    while (i < (n - 1)) {
+        uint16_t c = utf16_src[i];
+        
+        //Stop at null terminator
+        if (c == 0) {
+            break;
+        }
+
+        //If it's standard ASCII, take the lower byte. 
+        //If it's outside ASCII range, substitute with '?'.
+        if (c < 128) {
+            ascii_dest[i] = (char)c;
+        } else {
+            ascii_dest[i] = '?'; 
+        }
+        
+        i++;
+    }
+    
+    //Ensure null-termination
+    ascii_dest[i] = '\0';
 }
