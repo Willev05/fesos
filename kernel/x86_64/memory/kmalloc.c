@@ -128,6 +128,16 @@ void kfree(void *ptr) {
         LOG_W("Address %lx is not an address allocated by kmalloc. Address not aligned to proper block boundary for bucket size %lu. Returning.\n", v_addr, buckets[page_descriptor->bucket_index].bucket_size);
         return;
     }
+
+    //Lastly, check to see if this block is already part of the free block list.
+    uint64_t current_free_block = page_descriptor->free_list;
+    while (current_free_block != 0) {
+        if (current_free_block == v_addr) {
+            LOG_W("Address %lx has already been freed (double free). Returning.\n", v_addr);
+            return;
+        }
+        current_free_block = *(uint64_t*)current_free_block;
+    }
     
     //We then want to internally put this block back in the free list for the page.
     *(uint64_t*)v_addr = page_descriptor->free_list;

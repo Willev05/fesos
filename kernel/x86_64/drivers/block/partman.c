@@ -48,6 +48,10 @@ void partman_parse_drive(lbd_logical_drive_t *drive) {
     }
     LOG_D("Disk %s contains valid GPT table with %u partition entries.\n", drive->name, gpt_header->partition_entry_count);
 
+    //We start parsing the partition entry array.
+    volatile gpt_partition_entry_t *partition_entry_ptr = (volatile gpt_partition_entry_t*)kmalloc(gpt_header->partition_entry_size * gpt_header->partition_entry_count);
+    lbd_read(drive->drive_no, gpt_header->partition_entry_lba, gpt_header->partition_entry_size * gpt_header->partition_entry_count / drive->device_info.logical_sector_size_bytes, partition_entry_ptr);
+
 cleanup:
     kfree(mbr_table);
     kfree(gpt_header);
