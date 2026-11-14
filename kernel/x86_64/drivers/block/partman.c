@@ -52,8 +52,24 @@ void partman_parse_drive(lbd_logical_drive_t *drive) {
     volatile gpt_partition_entry_t *partition_entry_ptr = (volatile gpt_partition_entry_t*)kmalloc(gpt_header->partition_entry_size * gpt_header->partition_entry_count);
     lbd_read(drive->drive_no, gpt_header->partition_entry_lba, gpt_header->partition_entry_size * gpt_header->partition_entry_count / drive->device_info.logical_sector_size_bytes, partition_entry_ptr);
 
+    //Loop through them.
+    volatile gpt_partition_entry_t *gpt_partition_entry_current = partition_entry_ptr;
+    uint8_t *gpt_partition_entry_current_byte_ptr = (uint8_t*)gpt_partition_entry_current;
+    gpt_guid_t empty_guid = EMPTY_GUID;
+    for (int i = 0; i < gpt_header->partition_entry_count; i++) {
+        //If 0, then partition entry is unused.
+        if (memcmp(&gpt_partition_entry_current->partition_type_guid, &empty_guid, 16) != 0){
+            //TODO
+        }
+        
+        //Next partition entry code.
+        gpt_partition_entry_current_byte_ptr += gpt_header->partition_entry_size;
+        gpt_partition_entry_current = (volatile gpt_partition_entry_t*)gpt_partition_entry_current_byte_ptr;
+    }
+
 cleanup:
     kfree(mbr_table);
     kfree(gpt_header);
+    kfree(partition_entry_ptr);
     return;
 }

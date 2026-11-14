@@ -276,7 +276,7 @@ void *volatile_memset(volatile void *start, uint8_t pattern, size_t size) {
  */
 void *memcpy(void *dest, const void *src, size_t size) {
     uint8_t *dest8 = (uint8_t*)dest;
-    const uint8_t *src8 = (uint8_t*)src8;
+    const uint8_t *src8 = (uint8_t*)src;
 
     //Reach the 8 byte allignment, at least on the destination. If src and dest do not share the same last 3 bits, there will be slowdowns.
     while(((uint64_t)dest8 & 0x7) && 0 < size) {
@@ -301,4 +301,24 @@ void *memcpy(void *dest, const void *src, size_t size) {
     }
 
     return dest;
+}
+
+/**
+ * @brief Compares memory at both locations for `n` bytes. For now, simple byte-by-byte check.
+ * @param s1 The first memory location pointer.
+ * @param s2 The second memory location pointer.
+ * @param n The count of bytes to check.
+ * @return 0 if equal, > 0 if s1 has a byte larger than s2, < 0 if s2 has a byte larger than s1.
+ */
+int memcmp(const void *s1, const void *s2, size_t n) {
+    const unsigned char *p1 = (const unsigned char*)s1;
+    const unsigned char *p2 = (const unsigned char*)s2;
+
+    for (size_t i = 0; i < n; i++) {
+        if (p1[i] != p2[i]) {
+            return p1[i] - p2[i];
+        }
+    }
+
+    return 0;
 }

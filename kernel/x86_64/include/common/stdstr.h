@@ -21,3 +21,4 @@ int str_ncpy(char *src, char *dest, size_t n);
 void *memset(void *start, uint8_t pattern, size_t size);
 void *volatile_memset(volatile void *start, uint8_t pattern, size_t size);
 void *memcpy(void *dest, const void *src, size_t size);
+int memcmp(const void *s1, const void *s2, size_t n);

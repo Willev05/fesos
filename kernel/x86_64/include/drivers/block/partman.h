@@ -7,6 +7,9 @@
 
 #include <drivers/block/lbd.h>
 
+#define EMPTY_GUID {0x00000000,0x0000,0x0000,\
+{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}}
+
 typedef int (*fs_probe_t)(lbd_logical_drive_t *drive);
 
 typedef struct {
